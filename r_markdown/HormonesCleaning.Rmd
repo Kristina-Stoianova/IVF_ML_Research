@@ -1,0 +1,445 @@
+---
+title: "Hormones"
+output: html_document
+date: "2026-02-24"
+---
+
+```{r}
+library(dplyr)
+library(janitor)
+library(stringr)
+library(purrr)
+library(tidyr)
+```
+
+## Gonal FSH
+```{r}
+freshdata_3$Fsh_iu #Very messy
+```
+## Clean string
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+       Fsh_iu = Fsh_iu %>%
+#Remove drug name (case insensitive, flexible spacing), Gonal F
+      str_replace_all(regex("Gonal F\\s*=?\\s*", ignore_case = TRUE), "") %>%
+      str_replace_all(regex("\\bF\\s*=", ignore_case = TRUE), "") %>%
+#Remove "iu"
+      str_replace_all(regex("iu", ignore_case = TRUE), "") %>%
+#Standardise dash
+      str_replace_all("–", "-") %>%
+#Standardise D - inconsistent use
+      str_replace_all("D(\\d+)-D(\\d+)", "D\\1-\\2") %>%
+#Ensure space before parentheses
+      str_replace_all("\\(", " (") %>%
+#Removes space between bracket and D
+      str_replace_all("\\(\\s+", "(") %>%
+#Add comma between segments if missing
+      str_replace_all("\\)\\s*(?=\\d)", "), ") %>%
+#Replace & with comma
+      str_replace_all("&", ",") %>%
+#Remove double spaces
+      str_squish()
+  )
+
+#manual typo correction
+freshdata_3$Fsh_iu[8] <- "225 (D1-9)"
+#manual chronology correction
+freshdata_3$Fsh_iu[45] <- "225 (D1-5), 150 (D6-8), 225 (D9-12)"
+
+
+freshdata_3$Fsh_iu[freshdata_3$Fsh_iu == "n/a"] <- NA
+freshdata_3$Fsh_iu[freshdata_3$Fsh_iu == "N/A"] <- NA
+sum(is.na(freshdata_3$Fsh_iu)) #11 NA
+
+unique(freshdata_3$Fsh_iu) #28 unique dose entries
+```
+##PARSING FUNCTION
+```{r}
+parse_fsh <- function(x) {
+  
+  #If empty
+  if (is.na(x) || x == "" || x == "N/A") {
+    return(tibble(
+      FSH_used = 0,
+      FSH_total_dose = 0,
+      FSH_duration = 0,
+      FSH_initial_dose = NA,
+      FSH_final_dose = NA,
+      FSH_max_dose = NA,
+      FSH_min_dose = NA,
+      FSH_dose_changes = 0,
+      FSH_change_day_1 = NA,
+      FSH_change_day_2 = NA,
+      FSH_change_day_3 = NA,
+      FSH_avg_daily = NA
+    ))
+  }
+  
+  # Split segments
+  segments <- str_split(x, ",")[[1]] %>% str_trim()
+  
+  dose_data <- tibble()
+  last_dose <- NA
+  
+  for (seg in segments) {
+    
+    #Extract dose (if present)
+    dose_match <- str_extract(seg, "^\\d+\\.?\\d*")
+    
+    if (is.na(dose_match)) {
+      dose <- last_dose
+    } else {
+      dose <- as.numeric(dose_match)
+      last_dose <- dose
+    }
+    
+    #Extract day part
+    day_part <- str_extract(seg, "D\\d+(?:-\\d+)?")
+    
+    if (str_detect(day_part, "-")) {
+      start_day <- as.numeric(str_extract(day_part, "\\d+"))
+      end_day <- as.numeric(str_extract(day_part, "\\d+$"))
+    } else {
+      start_day <- as.numeric(str_extract(day_part, "\\d+"))
+      end_day <- start_day
+    }
+    
+    days <- seq(start_day, end_day)
+    
+    dose_data <- bind_rows(
+      dose_data,
+      tibble(day = days, dose = dose)
+    )
+  }
+  
+  #Sort by day
+  dose_data <- dose_data %>% arrange(day)
+  
+  total_dose <- sum(dose_data$dose)
+  duration_total <- nrow(dose_data)
+  
+  #Detect change days
+  change_days <- dose_data %>%
+    mutate(change = dose != lag(dose)) %>%
+    filter(change == TRUE & !is.na(change)) %>%
+    pull(day)
+  
+  tibble(
+    FSH_used = 1,
+    FSH_total_dose = total_dose,
+    FSH_duration = duration_total,
+    FSH_initial_dose = first(dose_data$dose),
+    FSH_final_dose = last(dose_data$dose),
+    FSH_max_dose = max(dose_data$dose),
+    FSH_min_dose = min(dose_data$dose),
+    FSH_dose_changes = length(change_days),
+    FSH_change_day_1 = ifelse(length(change_days) >= 1, change_days[1], NA),
+    FSH_change_day_2 = ifelse(length(change_days) >= 2, change_days[2], NA),
+    FSH_change_day_3 = ifelse(length(change_days) >= 3, change_days[3], NA),
+    FSH_dose_delta = last(dose_data$dose) - first(dose_data$dose),
+    FSH_dose_trend = sign(last(dose_data$dose) - first(dose_data$dose)),
+
+    FSH_avg_daily = total_dose / duration_total
+)
+}
+```
+
+## Apply to data
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(parsed = map(Fsh_iu, parse_fsh)) %>%
+  unnest(parsed)
+```
+
+## Move columns
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  relocate(starts_with("FSH_"), .after = Fsh_iu)
+
+freshdata_3$Fsh_iu <- NULL
+freshdata_3$Total_gonal_f_iu <- NULL
+```
+
+##hMG
+```{r}
+print(unique(freshdata_3[ ,"H_mg"]))
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    H_mg = H_mg %>%
+      #Handle typo
+      str_replace_all(regex("Menop\\w*\\s*", ignore_case = TRUE), " ") %>%
+      #Remove iu
+      str_replace_all(regex("iu", ignore_case = TRUE), "") %>%
+      #Standardise dash 
+      str_replace_all("–", "-") %>%
+      #Remove space after "(") bracket
+      str_replace_all("\\(\\s+", "(") %>%
+      #Remove space before ")" bracket
+      str_replace_all("\\s+\\)", ")") %>% 
+      #Inconsistent use of D - remove
+      str_replace_all("D(\\d+)-D(\\d+)", "D\\1-\\2") %>%
+      str_squish()
+  )
+
+freshdata_3$H_mg[freshdata_3$H_mg == "N/A"] <- NA
+sum(is.na(freshdata_3$H_mg))
+#50 NA
+#9 unique dose entries
+```
+
+## hMG paraser
+```{r}
+parse_hmg <- function(x) {
+  
+  if (is.na(x) || x == "" || x == "N/A") {
+    return(tibble(
+      Hmg_used = 0,
+      Hmg_total_dose = 0,
+      Hmg_duration = 0,
+      Hmg_initial_dose = NA,
+      Hmg_final_dose = NA,
+      Hmg_dose_changes = 0,
+      Hmg_dose_delta = NA,
+      Hmg_dose_trend = NA,
+      Hmg_avg_daily = NA
+    ))
+  }
+  
+  segments <- str_split(x, ",")[[1]] %>% str_trim()
+  
+  dose_data <- tibble()
+  last_dose <- NA
+  
+  for (seg in segments) {
+    
+    dose_match <- str_extract(seg, "^\\d+\\.?\\d*")
+    
+    if (is.na(dose_match)) {
+      dose <- last_dose
+    } else {
+      dose <- as.numeric(dose_match)
+      last_dose <- dose
+    }
+    
+    day_part <- str_extract(seg, "D\\d+(?:-\\d+)?")
+    
+    if (str_detect(day_part, "-")) {
+      start_day <- as.numeric(str_extract(day_part, "\\d+"))
+      end_day <- as.numeric(str_extract(day_part, "\\d+$"))
+    } else {
+      start_day <- as.numeric(str_extract(day_part, "\\d+"))
+      end_day <- start_day
+    }
+    
+    days <- seq(start_day, end_day)
+    
+    dose_data <- bind_rows(
+      dose_data,
+      tibble(day = days, dose = dose)
+    )
+  }
+  
+  dose_data <- dose_data %>% arrange(day)
+  
+  total_dose <- sum(dose_data$dose)
+  duration_total <- nrow(dose_data)
+  
+  change_days <- dose_data %>%
+    mutate(change = dose != lag(dose)) %>%
+    filter(change == TRUE & !is.na(change)) %>%
+    pull(day)
+  
+  tibble(
+    Hmg_used = 1,
+    Hmg_total_dose = total_dose,
+    Hmg_duration = duration_total,
+    Hmg_initial_dose = first(dose_data$dose),
+    Hmg_final_dose = last(dose_data$dose),
+    Hmg_dose_changes = length(change_days),
+    Hmg_dose_delta = last(dose_data$dose) - first(dose_data$dose),
+    Hmg_dose_trend = sign(last(dose_data$dose) - first(dose_data$dose)),
+    Hmg_avg_daily = total_dose / duration_total
+  )
+}
+```
+
+## Apply to data
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(parsed_hmg = map(H_mg, parse_hmg)) %>%
+  unnest(parsed_hmg)
+
+freshdata_3 <- freshdata_3 %>%
+  relocate(starts_with("Hmg_"), .after = H_mg)
+
+freshdata_3$H_mg <- NULL
+freshdata_3$Total_hmg <- NULL
+```
+
+#Fyremadel
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Fyremadel = Fyremadel %>%
+      #Remove IU/iu
+      str_replace_all(regex("iu", ignore_case = TRUE), "") %>%
+      #Standardise dash
+      str_replace_all("–", "-") %>%
+      #Fix spacing before and after bracket
+      str_replace_all("\\(\\s+", "(") %>%
+      str_replace_all("\\s+\\)", ")") %>%
+      str_replace_all("(?<=\\d)\\(", " (") %>%
+      #Standardise D formatting
+      str_replace_all("\\s*-\\s*", "-") %>% 
+      str_replace_all("D\\s*(\\d+)\\s*-\\s*D\\s*(\\d+)", "D\\1-\\2") %>%
+      str_replace_all("D\\s*(\\d+)", "D\\1") %>%
+      str_squish()
+  )
+
+freshdata_3$Fyremadel[freshdata_3$Fyremadel == "N/A"] <- NA
+freshdata_3$Fyremadel[freshdata_3$Fyremadel == ""] <- NA
+sum(is.na(freshdata_3$Fyremadel)) #8 NA
+
+freshdata_3$Fyremadel <- NULL
+
+print(unique(freshdata_3[, "Fyremadel"])) #8 unique dose entries
+```
+## Fyremadel Parser
+```{r}
+parse_fyr <- function(x) {
+  
+  if (is.na(x) || x == "" || x == "N/A") {
+    return(tibble(
+      Fyr_used = 0,
+      Fyr_start_day = NA,
+      Fyr_end_day = NA,
+      Fyr_duration = 0,
+      Fyr_total_dose = 0
+    ))
+  }
+  
+  dose <- as.numeric(str_extract(x, "^\\d+"))
+  
+  day_part <- str_extract(x, "D\\d+-\\d+")
+  
+  start_day <- as.numeric(str_extract(day_part, "\\d+"))
+  end_day <- as.numeric(str_extract(day_part, "\\d+$"))
+  
+  duration <- end_day - start_day + 1
+  
+  tibble(
+    Fyr_used = 1,
+    Fyr_start_day = start_day,
+    Fyr_end_day = end_day,
+    Fyr_duration = duration,
+    Fyr_total_dose = dose * duration
+  )
+}
+```
+
+## Apply
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(parsed_fyr = map(Fyremadel, parse_fyr)) %>%
+  unnest(parsed_fyr)
+
+freshdata_3 <- freshdata_3 %>%
+  relocate(starts_with("Fyr_"), .after = Fyremadel)
+
+freshdata_3$Fyremadel <- NULL
+freshdata_3$Total_fyremadel_iu <- NULL
+```
+
+## hCG trigger clean
+```{r}
+print(unique(freshdata_3$Trigger_h_cg))
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    #Trim whitespace
+    Trigger_h_cg = str_trim(Trigger_h_cg),
+    #Convert empty strings or "N" to NA
+    Trigger_h_cg = na_if(Trigger_h_cg, ""),
+    Trigger_h_cg = na_if(Trigger_h_cg, "N/A"),
+    #Remove stray quotes
+    Trigger_h_cg = str_replace_all(Trigger_h_cg, '"', ""),
+    #Remove IU / iu
+    Trigger_h_cg = str_replace_all(Trigger_h_cg, regex("IU|iu"), ""),
+    #Fix common typos (very important)
+    Trigger_h_cg = str_replace_all(
+      Trigger_h_cg,
+      regex("Busserillin|Busserelin|Buserellin", ignore_case = TRUE),
+      "Buserelin"
+    ),
+    #Standardise Ovitrelle spelling just in case
+    Trigger_h_cg = str_replace_all(
+      Trigger_h_cg,
+      regex("Ovitrelle", ignore_case = TRUE),
+      "Ovitrelle"
+    ),
+    #Clean spaces up
+    Trigger_h_cg = str_squish(Trigger_h_cg)
+  )
+
+sum(is.na(freshdata_3$Trigger_h_cg)) ##5 NA
+##3 unique, 1 hCG, 1 GnRH agonist, 1 dual
+```
+
+## hCG trigger
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    #Extract drugs --> trigger mechanism
+    has_hcg = str_detect(Trigger_h_cg, regex("Ovitrelle", ignore_case = TRUE)),
+    has_agonist = str_detect(Trigger_h_cg, regex("Buserelin", ignore_case = TRUE)),
+    #Extract dose
+    hCG_trigger_dose = ifelse(
+      has_hcg,
+      as.numeric(str_extract(
+        str_extract(Trigger_h_cg, "Ovitrelle\\s*\\d+"),
+      "\\d+"
+      )),
+      0
+    ),
+    GnRH_agonist_trigger_dose = ifelse(
+      has_agonist,
+      as.numeric(str_extract(
+        str_extract(Trigger_h_cg, "Buserelin\\s*\\d+"),
+        "\\d+"
+      )),
+      0
+    ),
+    #Mechanism
+    Trigger_mechanism = case_when(
+      has_hcg & has_agonist ~ "Dual",
+      has_hcg ~ "hCG",
+      has_agonist ~ "GnRH_agonist",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(-has_hcg, -has_agonist)
+
+freshdata_3 <- freshdata_3 %>%
+  relocate(
+    Trigger_mechanism,
+    hCG_trigger_dose,
+    GnRH_agonist_trigger_dose,
+    .after = Trigger_h_cg
+  )
+
+freshdata_3$Trigger_h_cg<- NULL
+```
+
+## Other Medications
+```{r}
+print(unique(freshdata_3$Other_medications))
+freshdata_3$Other_medications[freshdata_3$Other_medications == "N/A"] <- NA
+sum(is.na(freshdata_3$Other_medications)) #69 missing
+
+##remove other medications for now as 
+
+```
+
+

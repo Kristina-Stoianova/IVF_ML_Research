@@ -1,0 +1,145 @@
+---
+title: "More Data Cleaning Drugs"
+output: html_document
+date: "2026-03-05"
+---
+
+```{r}
+library(dplyr)
+library(stringr)
+```
+
+
+```{r}
+getwd()
+setwd("/Users/kristinastoianova/Desktop/data")
+freshdata <- read.csv("cleaned_freshdata.csv")
+```
+
+```{r}
+colnames(freshdata)
+print(unique(freshdata$Other_medications))
+```
+```{r}
+##9 patients with other medications entered, info entered in wrong way, should be dual trigger sometimes
+otherhormones <- freshdata %>%
+  filter(!is.na(Other_medications) & Other_medications != "") %>%
+  select(
+    Unique_number,
+    Other_medications,
+    Total_other_iu,
+    Trigger_mechanism,
+    GnRH_agonist_trigger_dose,
+    hCG_trigger_dose,
+    Last_day_of_stim
+  )
+```
+
+##Changes
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Trigger_mechanism = ifelse(Unique_number == "2653224K", "Dual", Trigger_mechanism),
+    GnRH_agonist_trigger_dose = ifelse(Unique_number == "2653224K", 700, GnRH_agonist_trigger_dose)
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Trigger_mechanism = ifelse(Unique_number == "8119398Y", "Dual", Trigger_mechanism),
+    GnRH_agonist_trigger_dose = ifelse(Unique_number == "8119398Y", 32, GnRH_agonist_trigger_dose)
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Trigger_mechanism = ifelse(Unique_number == "8120863D", "Dual", Trigger_mechanism),
+    GnRH_agonist_trigger_dose = ifelse(Unique_number == "8120863D", 240, GnRH_agonist_trigger_dose)
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Trigger_mechanism = ifelse(Unique_number == "8308873N", "Dual", Trigger_mechanism),
+    GnRH_agonist_trigger_dose = ifelse(Unique_number == "8308873N", 240, GnRH_agonist_trigger_dose)
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Trigger_mechanism = ifelse(Unique_number == "8356317B", "Dual", Trigger_mechanism),
+    GnRH_agonist_trigger_dose = ifelse(Unique_number == "8356317B", 260, GnRH_agonist_trigger_dose)
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Trigger_mechanism = ifelse(Unique_number == "8391436J", "Dual", Trigger_mechanism),
+    GnRH_agonist_trigger_dose = ifelse(Unique_number == "8391436J", 240, GnRH_agonist_trigger_dose)
+  )
+```
+
+##Progesterone
+```{r}
+#progesterone used --> yes or no
+freshdata <- freshdata %>%
+  mutate(
+    Progesterone = ifelse(str_detect(Other_medications, "Provera"), 1, 0)
+  )
+
+freshdata <- freshdata %>%
+  mutate(Progesterone = ifelse(is.na(Progesterone), 0, Progesterone))
+
+freshdata <- freshdata %>%
+  mutate(
+    Progesterone_total_dose = ifelse(Progesterone == 1,
+                                     Total_other_iu,
+                                     0)
+  )
+```
+
+##Fyrmadel, Cetrotide --> GnRH Antagonist
+```{r}
+##chaning fyrmaedel column to GnRH antagonist, allows for different mediciations to be used
+
+freshdata <- freshdata %>%
+  rename_with(~ gsub("^Fyr_", "GnRH_antagonist_", .x), starts_with("Fyr_"))
+```
+
+```{r}
+freshdata$GnRH_antagonist_used[freshdata$Unique_number == "8228365W"] <- 1
+freshdata$GnRH_antagonist_start_day[freshdata$Unique_number == "8228365W"] <- 6
+freshdata$GnRH_antagonist_end_day[freshdata$Unique_number == "8228365W"] <- 13
+freshdata$GnRH_antagonist_duration[freshdata$Unique_number == "8228365W"] <- 8
+freshdata$GnRH_antagonist_total_dose[freshdata$Unique_number == "8228365W"] <- 2000
+
+freshdata$Other_medications <- NULL
+freshdata$Total_other_iu <- NULL
+freshdata$Drug <- NULL
+```
+
+
+```{r}
+freshdata <- freshdata %>%
+  relocate(
+    Days_of_stim,
+    .after = GnRH_agonist_trigger_dose
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    GnRH_antagonist_used,
+    GnRH_antagonist_start_day,
+    GnRH_antagonist_end_day,
+    GnRH_antagonist_duration,
+    GnRH_antagonist_total_dose,
+    .after = GnRH_agonist_trigger_dose
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Progesterone, 
+    Progesterone_total_dose,
+    .after = Hmg_avg_daily
+  )
+```
+
+```{r}
+write.csv(freshdata, "cleaned_freshdata_1.csv", row.names = FALSE)
+```
+

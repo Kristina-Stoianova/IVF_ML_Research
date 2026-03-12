@@ -1,0 +1,850 @@
+---
+title: "CLEAN.1"
+output: html_document
+date: "2026-02-16"
+---
+
+```{r}
+library(dplyr)
+library(janitor)
+library(stringr)
+library(purrr)
+library(tidyr)
+```
+
+```{r}
+getwd()
+setwd("/Users/kristinastoianova/Desktop/data/")
+freshdata <- read.csv("patientdata_fresh1.csv")
+frozendata <- read.csv("patientdata_frozen.csv")
+```
+
+```{r}
+head(freshdata)
+#df 521x269
+class(freshdata)
+```
+
+```{r}
+#only 90 have data currently
+#removing rows 91-176
+freshdata[90, ]
+freshdata[91, ]
+freshdata[521, ]
+freshdata_1 <- freshdata[-c(91:521), ]
+```
+
+```{r}
+#adds underscores, begins with uppercase letter
+freshdata_2 <- freshdata_1 %>%
+  clean_names() %>%
+  rename_with(~ str_to_title(.))
+```
+
+```{r}
+#checking how many patients have a second cycle of data entered = 18
+sum(!is.na(freshdata_2$Cycle_no_1))
+#checking how many patients have a third cycle of data entered = 10
+sum(!is.na(freshdata_2$Cycle_no_2))
+##does not mean this is their second or third cycle - could be 4th etc.
+```
+
+```{r}
+#removing data fluid obtained
+freshdata_2$Date_fluid_obtained <- NULL
+#removing ethnicity, none at the moment
+freshdata_2$Ethnicity <- NULL
+
+#removing parameters not of interest - from egg fertilization onwards
+#removing from column 57 = ICSI/IVF this is a repeated, unnecessary column
+freshdata_2[, 57:ncol(freshdata_2)]
+
+#211/267 parameters will be removed
+ncol(freshdata_2) - 56
+```
+
+```{r}
+#dropping parameters on fertilization/embryo data + future cycles 
+freshdata_3 <- freshdata_2[, -c(57:ncol(freshdata_2))]
+#90x56 data frame so far
+```
+
+## Consented Date
+```{r}
+sum(str_squish(freshdata_3$Consented_date) == "Not on BBS", na.rm = TRUE) #29 empty fields/missing data
+sum(is.na(freshdata_3$Consented_date)) #0 NAs
+
+#replace with NA
+freshdata_3$Consented_date[freshdata_3$Consented_date == "Not on BBS"] <- NA
+freshdata_3$Consented_date[freshdata_3$Consented_date == "TBC"] <- NA
+
+sum(is.na(freshdata_3$Consented_date)) #30 NA
+```
+
+## Create PGD binary column 
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    PGD_binary = if_else(
+      str_detect(Aetiology, "PGD"),
+      "Y",
+      "N"
+    ), 
+    .after = Aetiology
+  )
+
+##Check
+freshdata_3 %>%
+  filter(
+    str_detect(Aetiology, "PGD") &
+    PGD_binary != "Y"
+  )
+#0 violations
+
+colnames(freshdata_3)[colnames(freshdata_3) == "PGD_binary"] <- "PGD"
+```
+
+## Aetiology
+```{r}
+male_terms <- c("Azoospermia", "Azoospermia +", "Male Factor", "Male Factor +", "+ Male Factor", ", Male Factor", "Male Factor Other", "Oligozoospermia", "Oligozoospermia +", "Oligozoospermia and ", "(Oligozoospermia)", "(OAT)", ", Sperm Donor", "(Teratoma)", "(terato)", "()")
+
+for (term in male_terms) {
+  freshdata_3$Aetiology <- str_remove_all(
+    freshdata_3$Aetiology,
+    fixed(term)
+  )
+} 
+
+#Remove "PGD," or ", PGD"
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Aetiology = str_replace_all(Aetiology, "^PGD,\\s*|,\\s*PGD", ""),
+    Aetiology = str_replace_all(Aetiology, "\\bPGD\\b", "")
+  )
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    #Replace any remaining commas with +
+    Aetiology = str_replace_all(Aetiology, ",\\s*", " + "),
+    #Remove duplicate commas and +
+    Aetiology = str_replace_all(Aetiology, ",\\s*,", ", "),
+    Aetiology = str_replace_all(Aetiology, "\\+\\s*\\+", "+"),
+    #Remove leading/trailing commas or +
+    Aetiology = str_replace_all(Aetiology, "^[,\\+\\s]+|[,\\+\\s]+$", ""),
+    #Trim white space
+    Aetiology = str_squish(Aetiology),
+    
+    #If empty field replace with "No Female Factor"
+    Aetiology = if_else(
+      Aetiology == "" | is.na(Aetiology),
+      "No Female Factor",
+      Aetiology
+    )
+  )
+
+replacements <- c(
+  "Fertility Preservation (low ovarian reserve + endometriosis)" = "Diminished Ovarian Reserve + Endometriosis",
+  "and DOR" = "Diminished Ovarian Reserve",
+  "Researve" = "Reserve",
+  "Ovulation Disorder, PCO" = "Ovulation Disorder PCO",
+  "Ovulation Disorders/PCO" = "Ovulation Disorder PCO"
+)
+
+freshdata_3$Aetiology <- str_replace_all(
+  freshdata_3$Aetiology,
+  fixed(replacements)
+)
+
+freshdata_3$Aetiology[freshdata_3$Aetiology == "Ovulation Disorder + PCO"] <- "Ovulation Disorder PCO"
+freshdata_3$Aetiology[newdata$Aetiology == "Same Sex Relatonship"] <- "Same Sex Relationship"
+```
+
+## Male Factor
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Male_factor_y_n"] <- "Male_factor"
+
+print(unique(freshdata_3[ ,"Male_factor"])) #N, Y, y
+freshdata_3$Male_factor[freshdata_3$Male_factor == "y"] <- "Y"
+print(unique(freshdata_3[ ,"Male_factor"]))
+
+#Check that when PGD = Y, "No Female Factor" in Aetiology, Male_factor is "Y"
+freshdata_3 %>%
+  filter(
+    Aetiology == "No Female Factor" &
+    Male_factor != "Y" &
+    PGD == "Y"
+  )
+#0 violation
+#These are due to PGD
+```
+
+## Make PGD and Male Factor column numerical
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Male_factor = case_when(
+      Male_factor == "Y" ~ 1,
+      Male_factor == "eN" ~ 0,
+      TRUE ~ NA_real_
+    )
+  )
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    PGD = case_when(
+      PGD == "Y" ~ 1,
+      PGD == "N" ~ 0,
+      TRUE ~ NA_real_
+    )
+    )
+```
+
+## Funding
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Nhs_pp"] <- "Funding"
+print(unique(freshdata_3[ ,"Funding"])) #"PP", "NHS", "NHS ", "PP (self funded)", "missing"
+
+sum(freshdata_3$Funding == "", na.rm = TRUE)
+#Replace missing with NA, replace PP (self funded) with PP, Replace "NHS " with NHS
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Funding = str_squish(Funding),   #removes trailing spaces
+    
+    Funding = case_when(
+      Funding == "missing" ~ NA,
+      Funding == "PP (self funded)" ~ "PP",
+      TRUE ~ Funding
+    )
+  )
+
+print(unique(freshdata_3[ ,"Funding"]))
+sum(is.na(freshdata_3$Funding)) #1 missing
+```
+
+##Infertility Duration
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Duration_of_infertility_months"] <- "Infertility_duration"
+
+print(unique(freshdata_3[ ,"Infertility_duration"]))
+
+#freshdata$Infertility_duration <- trimws(freshdata$Infertility_duration)
+
+#Non number entries
+sum(!grepl("^[0-9]+$", freshdata_3$Infertility_duration))
+#45 true numerical entries
+#39 missing
+sum(freshdata_3$Infertility_duration %in% 
+      c("N/A", "n/a", "MISSING", "_", "", "Not on BBS"))
+#6 have > signs
+sum(grepl("^>", freshdata_3$Infertility_duration), na.rm = TRUE)
+
+#clean
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Infertility_duration = str_squish(Infertility_duration),
+    Infertility_duration = if_else(
+      Infertility_duration %in% c("MISSING", "n/a", "N/A", "", "_", "Not on BBS"),
+      NA,
+      Infertility_duration
+    )
+  )
+
+print(unique(freshdata_3[ ,"Infertility_duration"]))
+sum(is.na(freshdata_3$Infertility_duration)) #39 missing
+
+unique(freshdata_3$Infertility_duration[grepl("^>", freshdata_3$Infertility_duration)]) ##>24, >48, > 36 --> 2, 3, 4 years
+
+str(freshdata_3$Infertility_duration) #data is chr because of > signs
+
+#remove > signs
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Infertility_duration = gsub("^>", "", Infertility_duration)
+  )
+
+freshdata_3$Infertility_duration <- as.numeric(freshdata_3$Infertility_duration)
+```
+
+#Treatment
+```{r}
+print(unique(freshdata_3[ ,"Treatment"]))
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Treatment = str_squish(Treatment),
+    
+    Treatment = case_when(
+      Treatment %in% c("IVF/ICSI", "ICSI/IVF") ~ "ICSI",
+      Treatment == "ICSI-38" ~ "ICSI",
+      Treatment == "IVF (35)" ~ "IVF",
+      Treatment == "IVF short with pills" ~ "IVF",
+      Treatment == "" ~ NA,
+      TRUE ~ Treatment
+    )
+  )
+
+print(unique(freshdata_3[ ,"Treatment"]))
+sum(is.na(freshdata_3$Treatment)) #4 NA
+```
+
+```{r}
+#exploring consented date and date of baseline scan for every individual --> this can be used to extract correct parameters from big data later
+dates_qc <- freshdata_3 %>%
+  select(Unique_number, Consented_date, Baseline_scan)
+```
+
+## DOB and Age
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Dob"] <- "DOB"
+colnames(freshdata_3)[colnames(freshdata_3) == "Age_at_present_cycle"] <- "Age"
+
+str(freshdata_3$Age) #num
+```
+
+## Baseline hormone levels
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Baseline_fsh"] <- "Baseline_FSH"
+sum(freshdata_3$Baseline_FSH == "Not on BBS", na.rm = TRUE) #67 missing values
+
+colnames(freshdata_3)[colnames(freshdata_3) == "Baseline_amh"] <- "Baseline_AMH"
+sum(freshdata_3$Baseline_AMH == "Not on BBS", na.rm = TRUE) #43 missing values
+
+colnames(freshdata_3)[colnames(freshdata_3) == "Baseline_afc"] <- "Baseline_AFC"
+sum(freshdata_3$Baseline_AFC == "", na.rm = TRUE) #1 missing value
+sum(freshdata_3$Baseline_AFC == "Not on BBS", na.rm = TRUE) #63 missing values ##64 total
+
+colnames(freshdata_3)[colnames(freshdata_3) == "Baseline_e2"] <- "Baseline_E2"
+sum(freshdata_3$Baseline_E2 == "Not on BBS", na.rm = TRUE) #66 missing values
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Baseline_FSH = round(as.numeric(str_remove(Baseline_FSH, "\\s*\\(.*\\)")), 1),
+    Baseline_AMH = round(as.numeric(str_remove(Baseline_AMH, "\\s*\\(.*\\)")), 1),
+    Baseline_AFC = round(as.numeric(str_remove(Baseline_AFC, "\\s*\\(.*\\)")), 1),
+    Baseline_E2  = round(as.numeric(str_remove(Baseline_E2,  "\\s*\\(.*\\)")), 1)
+  )
+
+str(freshdata_3$Baseline_FSH) ##numeric
+str(freshdata_3$Baseline_AMH) ##numeric
+str(freshdata_3$Baseline_AFC) ##numeric
+str(freshdata_3$Baseline_E2) ##numeric
+
+sum(is.na(freshdata_3$Baseline_FSH))
+```
+
+## Baseline scan
+```{r}
+print(unique(freshdata_3[ ,"Baseline_scan"]))
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Baseline_scan = str_squish(Baseline_scan),
+    Baseline_scan = if_else(
+      Baseline_scan %in% c("incomplete chart", "_", "N/A"),
+      NA,
+      Baseline_scan
+    )
+  )
+print(unique(freshdata_3[ ,"Baseline_scan"]))
+sum(is.na(freshdata_3$Baseline_scan)) #3 missing
+```
+
+##Baseline follicles
+```{r}
+#Right follicles
+colnames(freshdata_3)[colnames(freshdata_3) == "No_of_follicles_on_bl_scam_right"] <- "Baseline_right_follicles"
+freshdata_3$Baseline_right_follicles <- trimws(freshdata_3$Baseline_right_follicles)
+
+#6 non number entries, missing data
+sum(is.na(freshdata_3$Baseline_right_follicles) |
+  !grepl("^\\d+$", freshdata_3$Baseline_right_follicles)
+)
+#convert to NA
+freshdata_3$Baseline_right_follicles[
+  !grepl("^\\d+(\\.\\d+)?$", freshdata_3$Baseline_right_follicles)] <- NA
+sum(is.na(freshdata_3$Baseline_right_follicles))
+
+str(freshdata_3$Baseline_right_follicles) ##chr
+freshdata_3$Baseline_right_follicles <- as.numeric(freshdata_3$Baseline_right_follicles) ##num
+
+#Left follicles 
+colnames(freshdata_3)[colnames(freshdata_3) == "No_of_follicles_on_bl_scan_left"] <- "Baseline_left_follicles"
+
+#8 non number entries, missing data
+sum(is.na(freshdata_3$Baseline_left_follicles) |
+  !grepl("^\\d+$", freshdata_3$Baseline_left_follicles)
+)
+#convert to NA
+freshdata_3$Baseline_left_follicles[
+  !grepl("^\\d+(\\.\\d+)?$", freshdata_3$Baseline_left_follicles)] <- NA
+sum(is.na(freshdata_3$Baseline_left_follicles))
+
+str(freshdata_3$Baseline_left_follicles) ##chr
+freshdata_3$Baseline_left_follicles <- as.numeric(freshdata_3$Baseline_left_follicles) ##num
+
+#Endometrium
+colnames(freshdata_3)[colnames(freshdata_3) == "Baseline_endometrium_mm"] <- "Baseline_endometrium"
+
+freshdata_3$Baseline_endometrium <- trimws(freshdata_3$Baseline_endometrium) #removes trailing space
+#3 missing values 
+sum(freshdata_3$Baseline_endometrium %in% 
+  c("_", "N/A", "incomplete chart"),
+  na.rm = TRUE
+)
+
+#convert to NA
+freshdata_3$Baseline_endometrium[
+  tolower(freshdata_3$Baseline_endometrium) %in% 
+    c("_", "n/a", "incomplete chart")
+] <- NA
+sum(is.na(freshdata_3$Baseline_endometrium))
+
+str(freshdata_3$Baseline_endometrium) #chr, need to convert to numeric and round to 2dp
+
+#convert to numeric and round to 2dp
+freshdata_3$Baseline_endometrium <- round(
+  as.numeric(freshdata_3$Baseline_endometrium),
+  2
+  )
+```
+
+## Deriving Total Follicle count
+```{r}
+#data$Baseline_AFC <- NULL
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(Baseline_total_follicles = Baseline_right_follicles + Baseline_left_follicles)
+
+freshdata_3 <- freshdata_3 %>%
+  relocate(
+    Baseline_total_follicles,
+    .after = Baseline_E2
+  )
+```
+
+## Baseline follicle size
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Size_of_follicle"] <- "Baseline_follicle_size"
+unique(freshdata_3$Baseline_follicle_size)
+
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Baseline_follicle_size = str_trim(Baseline_follicle_size),
+    #Convert missing data to NA
+    Baseline_follicle_size = case_when(
+      Baseline_follicle_size %in% c(
+        "N/A", "_",
+        "see comments ", 
+        "see comments",
+        "incomplete chart ",
+        "incomplete chart",
+        "Jun-19"
+      ) ~ NA_character_,
+      TRUE ~ Baseline_follicle_size
+    ),
+    #Standardize format
+    Baseline_follicle_size = str_replace_all(Baseline_follicle_size, "--", "-"),
+    Baseline_follicle_size = str_replace_all(Baseline_follicle_size, "->", ">"),
+    Baseline_follicle_size = str_squish(Baseline_follicle_size)
+  )
+sum(is.na(freshdata_3$Baseline_follicle_size)) #6 missing
+table(freshdata_3$Baseline_follicle_size)
+
+##Follicle size function
+process_follicle_size <- function(freshdata_3, column, prefix) {
+  
+  column <- enquo(column)
+  
+  freshdata_3 %>%
+    mutate(
+      # Flag >24
+      !!paste0(prefix, "_follicle_size_gt24_flag") :=
+        as.integer(str_detect(!!column, "^>")),
+      
+      #Minimum size
+      !!paste0(prefix, "_follicle_min_size") :=
+        case_when(
+          is.na(!!column) ~ NA_real_,
+          str_detect(!!column, "^>") ~ 24,
+          TRUE ~ as.numeric(str_extract(!!column, "^\\d+"))
+        ),
+      
+      #Maximum size
+      !!paste0(prefix, "_follicle_max_size") :=
+        case_when(
+          is.na(!!column) ~ NA_real_,
+          str_detect(!!column, "^>") ~ 25,
+          str_detect(!!column, "-") ~ 
+            as.numeric(str_extract(!!column, "\\d+$")),
+          TRUE ~ as.numeric(str_extract(!!column, "^\\d+"))
+        ),
+      
+      # Spread
+      !!paste0(prefix, "_follicle_spread") :=
+        !!sym(paste0(prefix, "_follicle_max_size")) -
+        !!sym(paste0(prefix, "_follicle_min_size"))
+    )
+}
+```
+
+```{r}
+freshdata_3 <- process_follicle_size(
+  freshdata_3,
+  Baseline_follicle_size,
+  "Baseline"
+)
+
+freshdata_3 <- freshdata_3 %>%
+  relocate(
+    Baseline_follicle_min_size,
+    Baseline_follicle_max_size,
+    Baseline_follicle_size_gt24_flag,
+    Baseline_follicle_spread,
+    .after = Baseline_follicle_size
+  )
+
+freshdata_3$Baseline_follicle_size <- NULL
+```
+
+## Protocol
+```{r}
+print(unique(freshdata_3[ ,"Protocol"])) #19 unique entries
+freshdata_3 %>%
+  filter(str_detect(Protocol, regex("short", ignore_case = TRUE))) %>%
+  pull(Protocol) ##Short antagonist and Short hMG are the same --> rename
+```
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Protocol = str_squish(Protocol),  # remove double spaces
+    #Fix 225 iu to 225iu
+    Protocol = str_replace_all(Protocol, "(\\d+)\\s+iu", "\\1iu"),
+    Protocol = str_replace(Protocol, "hMG\\+rRFSH", "hMG+rFSH"), #typo 
+    #Standardize Fertility preservation case ONLY
+    Protocol = str_replace(Protocol, "Fertility preservation", "Fertility Preservation")
+  )
+```
+
+## Split Protocol into 3 columns: Protocol, Drug, Dose
+```{r}
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    #Protocol Type
+    Protocol_type = case_when(
+      str_detect(Protocol, "Long Agonist") ~ "Long Agonist",
+      str_detect(Protocol, "Short Antagonist") ~ "Short Antagonist",
+      str_detect(Protocol, "^Short\\b") ~ "Short Antagonist", 
+      str_detect(Protocol, "Egg Donor") ~ "Egg Donor",
+      str_detect(Protocol, "Fertility Preservation") ~ "Fertility Preservation",
+      TRUE ~ NA
+    ),
+    #Drug administered
+    Drug = case_when(
+      str_detect(Protocol, "hMG\\+rFSH") ~ "hMG+rFSH",
+      str_detect(Protocol, "rFSH") & !str_detect(Protocol, "hMG") ~ "rFSH",
+      str_detect(Protocol, "hMG") & !str_detect(Protocol, "rFSH") ~ "hMG",
+      TRUE ~ NA
+    ),
+    
+    #Dose 
+    Dose_iu = as.numeric(str_extract(Protocol, "\\d+")),
+    
+    .after = Protocol   #places all new columns after Protocol
+  )
+
+#Remove original protocol
+freshdata_3$Protocol <- NULL
+print(unique(freshdata_3$Protocol_type))
+
+#Remove dose, info comes later
+freshdata_3$Dose_iu <- NULL
+```
+
+```{r}
+#Remove date of additional scan
+freshdata_3$Date_of_additional_scan <- NULL
+```
+
+## Second scans
+```{r}
+#Scan day
+colnames(freshdata_3)[colnames(freshdata_3) == "Day_of_2nd_scan"] <- "Second_scan_day"
+
+sum(freshdata_3$Second_scan_day == "N/A", na.rm = TRUE) #40 missing values 
+freshdata_3$Second_scan_day[tolower(trimws(freshdata_3$Second_scan_day)) == "n/a"] <- NA
+
+#Remove D prefix from day so that it can be treated as numeric
+freshdata_3$Second_scan_day <- gsub("^D", "", freshdata_3$Second_scan_day)
+str(freshdata_3$Second_scan_day) #chr
+freshdata_3$Second_scan_day <- as.numeric(freshdata_3$Second_scan_day) ##num
+
+sum(is.na(freshdata_3$Second_scan_day)) #41
+```
+
+```{r}
+#Right follicles
+colnames(freshdata_3)[colnames(freshdata_3) == "X2nd_scan_no_of_follciles_right"] <- "Second_scan_right_follicles"
+
+sum(freshdata_3$Second_scan_right_follicles == "N/A", na.rm = TRUE) #41 NA
+freshdata_3$Second_scan_right_follicles[tolower(trimws(freshdata_3$Second_scan_right_follicles)) == "n/a"] <- NA
+sum(is.na(freshdata_3$Second_scan_right_follicles)) #42 missing 
+
+str(freshdata_3$Second_scan_right_follicles) #chr
+freshdata_3$Second_scan_right_follicles <- as.numeric(freshdata_3$Second_scan_right_follicles) #num
+
+#Left follicles 
+colnames(freshdata_3)[colnames(freshdata_3) == "X2nd_scan_no_of_follciles_left"] <- "Second_scan_left_follicles"
+
+sum(freshdata_3$Second_scan_left_follicles == "N/A", na.rm = TRUE) #41 NA, 1 see comments and 1 _
+freshdata_3$Second_scan_left_follicles[tolower(trimws(freshdata_3$Second_scan_left_follicles)) == "n/a"] <- NA
+freshdata_3$Second_scan_left_follicles[freshdata_3$Second_scan_left_follicles == "_"] <- NA
+freshdata_3$Second_scan_left_follicles[freshdata_3$Second_scan_left_follicles == "see comments"] <- NA
+sum(is.na(freshdata_3$Second_scan_left_follicles)) #45 missing
+
+str(freshdata_3$Second_scan_left_follicles) #chr
+freshdata_3$Second_scan_left_follicles <- as.numeric(freshdata_3$Second_scan_left_follicles) #num
+
+#Endometrium 
+colnames(freshdata_3)[colnames(freshdata_3) == "X2nd_endo_mm"] <- "Second_scan_endometrium"
+sum(freshdata_3$Second_scan_endometrium == "N/A", na.rm = TRUE) #40 NA, 1 missing
+freshdata_3$Second_scan_endometrium[tolower(trimws(freshdata_3$Second_scan_endometrium)) == "n/a"] <- NA
+freshdata_3$Second_scan_endometrium[freshdata_3$Second_scan_endometrium == "missing"] <- NA
+sum(is.na(freshdata_3$Second_scan_endometrium)) #42 missing
+
+#chr --> num 2dp
+str(freshdata_3$Second_scan_endometrium)
+freshdata_3$Second_scan_endometrium <- round(as.numeric(freshdata_3$Second_scan_endometrium), 2)
+
+##Should add units to endometrium (mm) column names 
+```
+
+## Follicle Size
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "X2nd_scan_follicle_size"] <- "Second_scan_follicle_size"
+unique(freshdata_3$Second_scan_follicle_size)
+
+#clean
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Second_scan_follicle_size = str_trim(Second_scan_follicle_size),
+    #Convert missing data to NA
+    Second_scan_follicle_size = case_when(
+      Second_scan_follicle_size %in% c(
+        "N/A", "_",
+        "see comments ", 
+        "see comments",
+        "incomplete chart ",
+        "incomplete chart",
+        "Jun-19"
+      ) ~ NA_character_,
+      TRUE ~ Second_scan_follicle_size
+    ),
+    #Standardize format
+    Second_scan_follicle_size = str_replace_all(Second_scan_follicle_size, "--", "-"),
+    Second_scan_follicle_size = str_replace_all(Second_scan_follicle_size, "->", ">"),
+    Second_scan_follicle_size = str_squish(Second_scan_follicle_size)
+  )
+
+sum(is.na(freshdata_3$Second_scan_follicle_size)) #41 missing
+table(freshdata_3$Second_scan_follicle_size)
+```
+```{r}
+freshdata_3 <- process_follicle_size(
+  freshdata_3,
+  Second_scan_follicle_size,
+  "Second_scan"
+)
+
+freshdata_3 <- freshdata_3 %>%
+  relocate(
+    Second_scan_follicle_min_size,
+    Second_scan_follicle_max_size,
+    Second_scan_follicle_size_gt24_flag,
+    Second_scan_follicle_spread,
+    .after = Second_scan_follicle_size
+  )
+
+freshdata_3$Second_scan_follicle_size <- NULL
+```
+
+## Days of Stimulation
+```{r}
+print(unique(freshdata_3$Days_of_stim))
+str(freshdata_3$Days_of_stim) ##chr
+freshdata_3$Days_of_stim <- as.numeric(freshdata_3$Days_of_stim) ##num
+sum(is.na(freshdata_3$Days_of_stim)) #1 NA
+```
+
+## Date of final scan
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Dx_last_scan_prior_to_trigger"] <- "Date_last_scan_pre_trigger"
+print(unique(freshdata_3$Date_last_scan_pre_trigger))
+freshdata_3$Date_last_scan_pre_trigger <- NULL
+
+#str(freshdata_3$Date_last_scan_pre_trigger)
+#freshdata_3$Date_last_scan_pre_trigger[freshdata_3$Date_last_scan_pre_trigger == "incomplete chart "] <- NA
+#freshdata_3$Date_last_scan_pre_trigger[freshdata_3$Date_last_scan_pre_trigger == ""] <- NA
+```
+
+## Other (drug)
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Other"] <- "Other_drug"
+print(unique(freshdata_3[ ,"Other_drug"]))
+```
+## Last day of stim
+```{r}
+freshdata_3$Last_day_of_stim <- gsub("^D", "", freshdata_3$Last_day_of_stim)
+str(freshdata_3$Last_day_of_stim) ##chr --> num
+freshdata_3$Last_day_of_stim <- as.numeric(freshdata_3$Last_day_of_stim)
+```
+
+## Day of trigger
+```{r}
+freshdata_3$Day_of_trigger <- gsub("^D", "", freshdata_3$Day_of_trigger)
+freshdata_3$Day_of_trigger <- as.numeric(freshdata_3$Day_of_trigger)
+str(freshdata_3$Day_of_trigger) ##num
+sum(is.na(freshdata_3$Day_of_trigger)) #8 missing
+```
+
+```{r}
+trigger_qc <- freshdata_3 %>%
+  select(Unique_number, Last_day_of_stim, Day_of_trigger)
+```
+
+## Day of Egg Collection (EC)
+```{r}
+freshdata_3$Day_of_ec <- gsub("^D", "", freshdata_3$Day_of_ec)
+sum(is.na(freshdata_3$Day_of_EC)) #0
+```
+
+## Date and Day of EC
+```{r}
+#freshdata_3$Date_of_ec[freshdata_3$Date_of_ec == ""] <- NA
+#sum(is.na(freshdata_3$Date_of_ec)) ##37 NA
+freshdata_3$Date_of_ec <- NULL
+
+freshdata_3$Day_of_ec <- as.numeric(freshdata_3$Day_of_ec)
+str(freshdata_3$Day_of_ec) #num
+```
+
+```{r}
+str(freshdata_3$No_eggs) #int
+str(freshdata_3$No_mature_eggs) #int
+```
+
+## Final Scans
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Follicles_right"] <- "Final_follicles_right"
+print(unique(freshdata_3$Final_follicles_right))
+freshdata_3$Final_follicles_right <- as.numeric(freshdata_3$Final_follicles_right)
+sum(is.na(freshdata_3$Final_follicles_right)) #1 NA
+
+colnames(freshdata_3)[colnames(freshdata_3) == "Follicles_left"] <- "Final_follicles_left"
+print(unique(freshdata_3$Final_follicles_left))
+freshdata_3$Final_follicles_left <- as.numeric(freshdata_3$Final_follicles_left)
+sum(is.na(freshdata_3$Final_follicles_left)) #4 NA
+
+colnames(freshdata_3)[colnames(freshdata_3) == "Endo_at_ec_mm"] <- "Final_endometrium"
+freshdata_3$Final_endometrium <- round(as.numeric(freshdata_3$Final_endometrium), 2)
+sum(is.na(freshdata_3$Final_endometrium)) #2 NA
+```
+
+## Final Follicle size
+```{r}
+colnames(freshdata_3)[colnames(freshdata_3) == "Foll_size_mm"] <- "Final_follicle_size"
+
+unique(freshdata_3$Final_follicle_size)
+
+#clean
+freshdata_3 <- freshdata_3 %>%
+  mutate(
+    Final_follicle_size = str_trim(Final_follicle_size),
+    #Convert missing data to NA
+    Final_follicle_size = case_when(
+      Final_follicle_size %in% c(
+        "N/A", "_",
+        "see comments ", 
+        "see comments",
+        "incomplete chart ",
+        "incomplete chart",
+        "Jun-19"
+      ) ~ NA_character_,
+      TRUE ~ Final_follicle_size
+    ),
+    #Standardize format
+    Final_follicle_size = str_replace_all(Final_follicle_size, "--", "-"),
+    Final_follicle_size = str_replace_all(Final_follicle_size, "->", ">"),
+    Final_follicle_size = str_squish(Final_follicle_size)
+  )
+
+sum(is.na(freshdata_3$Final_follicle_size)) #41 missing
+table(freshdata_3$Final_follicle_size)
+```
+```{r}
+freshdata_3 <- process_follicle_size(
+  freshdata_3,
+  Final_follicle_size,
+  "Final"
+)
+
+freshdata_3 <- freshdata_3 %>%
+  relocate(
+    Final_follicle_min_size,
+    Final_follicle_max_size,
+    Final_follicle_size_gt24_flag,
+    Final_follicle_spread,
+    .after = Final_follicle_size
+  )
+
+freshdata_3$Final_follicle_size <- NULL
+```
+
+## Removing sperm data
+```{r}
+freshdata_3$Sperm_source_f_fz <- NULL
+
+freshdata_3$Pre_wash_sperm_concentration_mil_ml <- NULL
+freshdata_3$Pre_wash_sperm_motility <- NULL
+freshdata_3$Pre_wash_sperm_morphology_normal_forms <- NULL
+
+freshdata_3$Post_wash_sperm_concentration_mil_ml <- NULL
+freshdata_3$Post_wash_sperm_motility <- NULL
+freshdata_3$Semen_volume_ml <- NULL
+
+freshdata_3$Sperm_prep_dg_mini_none <- NULL
+freshdata_3$Sperm_mobil_y_n <- NULL
+```
+
+## Cycle number --> removing patients whose first entered data is not their first cycle and frozen data
+```{r}
+print(unique(freshdata_3$Cycle_no))
+sum(freshdata_3$Cycle_no == "1") #78
+sum(freshdata_3$Cycle_no == "2") #8
+sum(freshdata_3$Cycle_no == "3") #3
+sum(freshdata_3$Cycle_no == "4") #1
+
+str(freshdata_3$Cycle_no) #int
+
+freshdata_3 <- freshdata_3 %>%
+  filter(Cycle_no == 1)
+
+print(unique(freshdata_3$Treatment))
+sum(freshdata_3$Cycle_no == "1")
+
+```
+
+```{r}
+freshdata_3$H_mg <- NULL
+freshdata_3$DOB <- NULL
+freshdata_3$Consented_date <- NULL
+freshdata_3$Baseline_scan <- NULL
+freshdata_3$Drug <- NULL
+```
+```{r}
+#freshdata_3 <- freshdata_3 %>% select(-H_mg)
+```
+
+```{r}
+write.csv(freshdata_3, "cleaned_freshdata.csv", row.names = FALSE)
+```
+
