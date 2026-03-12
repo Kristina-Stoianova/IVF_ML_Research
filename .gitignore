@@ -19,3 +19,6 @@ __pycache__/
 # models
 *.pkl
 *.h5
+
+# macOS system files
+.DS_Store
