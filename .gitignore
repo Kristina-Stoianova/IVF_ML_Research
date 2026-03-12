@@ -1,0 +1,21 @@
+# Data (IVF Data)
+data/raw/
+data/processed/
+*.csv
+*.xlsx
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# models
+*.pkl
+*.h5
