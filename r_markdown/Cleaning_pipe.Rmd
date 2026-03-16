@@ -1,0 +1,648 @@
+---
+title: "Cleaning pipeline"
+output: html_document
+date: "2026-03-12"
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+
+#Load required packages
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(janitor)
+
+library(here)
+
+#Load functions scripts needed for this pipeline
+source(here("scripts", "cleaning_helpers.R"))
+source(here("scripts", "cleaning_functions_parsers.R"))
+```
+
+```{r}
+#list.files("..")
+#list.files("../scripts")
+#list.files("../data/raw")
+```
+
+```{r, message = FALSE}
+freshdata <- read_csv(
+  here("data","raw","patientdata_fresh1.csv"),
+  name_repair = "minimal"
+)
+
+#freshdata <- read.csv("../data/raw/patientdata_fresh1.csv")
+#df 521x269
+```
+
+```{r}
+#only 90 have data currently
+#removing rows 91-176
+freshdata[90, ]
+freshdata[91, ]
+freshdata[521, ]
+freshdata <- freshdata[-c(91:521), ]
+```
+
+```{r}
+freshdata <- freshdata %>%
+  clean_names() %>%
+  rename_with(~ str_to_title(.))
+```
+
+```{r}
+freshdata[, 61:ncol(freshdata)]
+freshdata <- freshdata %>%
+  select(1:60)
+
+#Define columns to drop - can be modified depending on what is needed
+drop_cols <- c(
+  "Consented_date",
+  "Date_fluid_obtained",
+  "Ethnicity",
+  "Dob",
+  "Baseline_scan",
+  "Days_of_stim",
+  "Day_of_2nd_scan",
+  "Date_of_additional_scan",
+  "Dx_last_scan_prior_to_trigger",
+  "Semen_volume_ml",
+  "Day_of_trigger",
+  "Date_of_ec",
+  "Icsi_ivf"
+)
+
+freshdata <- freshdata %>%
+  select(
+    -contains("sperm"),
+    -any_of(drop_cols)
+  )
+
+names(freshdata)
+#90x39 df
+```
+
+## Rename parameters (colnames)
+
+```{r}
+##new name = old name
+freshdata <- freshdata %>%
+  rename(
+    Male_factor = Male_factor_y_n,
+    Funding = Nhs_pp,
+    Infertility_duration = Duration_of_infertility_months,
+    Age = Age_at_present_cycle,
+    Baseline_FSH = Baseline_fsh, 
+    Baseline_AMH = Baseline_amh,
+    Baseline_AFC = Baseline_afc, 
+    Baseline_E2 = Baseline_e2,
+    Baseline_endometrium = Baseline_endometrium_mm,
+    Baseline_left_follicles = No_of_follicles_on_bl_scan_left,
+    Baseline_right_follicles = No_of_follicles_on_bl_scam_right,
+    Baseline_follicle_size = Size_of_follicle,
+    Second_scan_left_follicles = X2nd_scan_no_of_follciles_left,
+    Second_scan_right_follicles = X2nd_scan_no_of_follciles_right,
+    Second_scan_follicle_size = X2nd_scan_follicle_size,
+    Second_scan_endometrium = X2nd_endo_mm,
+    Final_left_follicles = Follicles_left,
+    Final_right_follcles = Follicles_right,
+    Final_follicle_size = Foll_size_mm,
+    Final_endometrium_ec = Endo_at_ec_mm
+  )
+
+```
+
+```{r}
+freshdata <- standardise_missing_values(freshdata)
+```
+
+##Derive PGD
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    ##Derive PGD column
+    PGD = if_else(
+      str_detect(Aetiology, regex("\\bPGD\\b", ignore_case = TRUE)),
+      "Y",
+      "N"
+    ),
+    .after = Aetiology
+  )
+```
+
+## Aetiology
+
+```{r}
+male_terms <- c("Azoospermia","Male Factor","Male Factor Other","Oligozoospermia","Sperm Donor","OAT","Teratoma","terato")
+male_pattern <- paste(male_terms, collapse = "|")
+
+freshdata <- freshdata %>%
+  mutate(
+    ##Clean Aetiology column with categorical clean function
+    Aetiology = Aetiology %>%
+      clean_categorical() %>%
+      ##Standardise ovulation disorder to PCO
+      str_replace_all(regex("Ovulation Disorder[s]?", ignore_case = TRUE), "PCO") %>%
+      ##Remove introduced duplicate PCO combinations
+      str_replace_all("\\bPCO \\+ PCO\\b", "PCO") %>%
+      ##Remove PGD term
+      str_remove_all(regex("\\bPGD\\b", ignore_case = TRUE)) %>%
+      ##Remove male factor terms
+      str_remove_all(regex(male_pattern, ignore_case = TRUE)) %>%
+      ##Capitalize string after "+"
+      str_replace_all("\\+\\s*([a-z])", ~ paste0("+ ", toupper(.x))) %>%
+      ##Clean again
+      clean_categorical() %>%
+      ##Replace empty with No Female Factor
+      (\(x) ifelse(x == "" | is.na(x), "No Female Factor", x))(),
+  )
+```
+
+## Typos
+
+```{r}
+typos <- c(
+  "Same Sex Relatonship" = "Same Sex Relationship",
+  "Researve" = "Reserve"
+)
+
+dor_terms <- c(
+  "Fertility Preservation low ovarian reserve + endometriosis" = "DOR + Endometriosis",
+    "Fertility Preservation low ovarian reserve" = "DOR",
+  "Diminished Ovarian Reserve" = "DOR",
+  "Low Ovarian Reserve" = "DOR"
+)
+
+freshdata <- freshdata %>%
+  mutate(
+    Aetiology = str_replace_all(Aetiology, typos),
+    Aetiology = str_replace_all(Aetiology, dor_terms)
+  )
+```
+
+## Aetiology QC Checks
+
+```{r}
+print(unique(freshdata$Aetiology))
+
+##Check = 0
+freshdata %>%
+  filter(
+    str_detect(Aetiology, "PGD") &
+    PGD != "Y"
+  )
+
+freshdata %>%
+  filter(
+    PGD == "Y" &
+    Male_factor == "Y" &
+    Aetiology == "No Female Factor"
+  )
+
+#0
+freshdata %>%
+  filter(str_detect(Aetiology, "PGD"))
+```
+
+## Funding
+
+```{r}
+unique(freshdata$Funding)
+
+##Clean
+freshdata <- freshdata %>%
+  mutate(
+    Funding = str_squish(Funding),   # remove extra spaces
+    Funding = case_when(
+      Funding %in% c("", "missing") ~ NA_character_,
+      Funding == "PP (self funded)" ~ "PP",
+      TRUE ~ Funding
+    )
+  )
+
+##QC checks
+unique(freshdata$Funding)
+freshdata %>% 
+  count(Funding)
+```
+
+## Infertility Duration
+
+```{r}
+unique(freshdata$Infertility_duration)
+
+##check > entries = 6
+sum(grepl("^>", freshdata$Infertility_duration), na.rm = TRUE)
+
+##clean column
+freshdata <- freshdata %>%
+  mutate(
+    Infertility_duration = str_remove(Infertility_duration, "^>"),
+    Infertility_duration = as.numeric(Infertility_duration)
+  )
+
+## QC checks
+freshdata %>% 
+  count(Infertility_duration)
+```
+
+## Treatment
+
+```{r}
+print(unique(freshdata[ ,"Treatment"]))
+
+freshdata <- freshdata %>%
+  mutate(
+    Treatment = case_when(
+      Treatment %in% c("IVF/ICSI", "ICSI/IVF") ~ "IVF/ICSI",
+      Treatment %in% c("ICSI-38", "ICSI (Surrogacy)") ~ "ICSI",
+      Treatment %in% c("IVF (35)", "IVF short with pills") ~ "IVF",
+      Treatment == "" ~ NA_character_,
+      TRUE ~ Treatment
+    )
+  )
+
+print(unique(freshdata[ ,"Treatment"]))
+```
+
+```{r}
+str(freshdata$Age) #num
+```
+
+## Baselines
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    across(
+      c(Baseline_FSH, Baseline_AMH, Baseline_AFC, Baseline_E2),
+      clean_baseline
+    ),
+    Baseline_endometrium = round(as.numeric(Baseline_endometrium), 2),
+    across(
+      c(Baseline_right_follicles, Baseline_left_follicles),
+      ~ as.numeric(.x)
+    )
+  )
+```
+
+## Deriving total follicle count
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Baseline_total_follicles = Baseline_right_follicles + Baseline_left_follicles
+  ) %>%
+  relocate(
+    Baseline_total_follicles,
+    .after = Baseline_E2
+  )
+```
+
+## Protocol
+
+```{r}
+unique(freshdata$Protocol)
+
+freshdata <- freshdata %>%
+  mutate(
+    Protocol = Protocol %>%
+      str_squish() %>%
+      str_replace_all("(\\d+)\\s+iu", "\\1iu") %>%      # 225 iu to 225iu
+      str_replace("hMG\\+rRFSH", "hMG+rFSH") %>%        # typo fix
+      str_replace("Fertility preservation", "Fertility Preservation")
+  )
+
+##Derive 3 columns for clarity
+freshdata <- freshdata %>%
+  mutate(
+    ##1.Protocol type
+    Protocol_type = case_when(
+      str_detect(Protocol, "Long Agonist") ~ "Long Agonist",
+      str_detect(Protocol, "Short") ~ "Short Antagonist",
+      str_detect(Protocol, "Egg Donor") ~ "Egg Donor",
+      str_detect(Protocol, "Fertility Preservation") ~ "Fertility Preservation",
+      TRUE ~ NA_character_
+    ),
+    ##2.Drug
+    Drug = case_when(
+      str_detect(Protocol, "hMG\\+rFSH") ~ "Dual",
+      str_detect(Protocol, "rFSH") & !str_detect(Protocol, "hMG") ~ "rFSH",
+      str_detect(Protocol, "hMG") & !str_detect(Protocol, "rFSH") ~ "hMG",
+      TRUE ~ NA_character_
+    ),
+    ##3.Dose
+    Dose_iu = as.numeric(str_extract(Protocol, "\\d+"))
+    
+  ) %>%
+  relocate(Protocol_type, Drug, Dose_iu, .after = Protocol)
+
+
+##Checks
+freshdata %>% count(Protocol_type) #59 Short, 6 Long, 4 Fertility Preservation, 21 egg donor
+freshdata %>% count(Drug) #30 rFSH, 15 hMG, 20 Dual, 25 NA
+
+##Drop original Protocol column, and derived Drug and Dose_iu columns as information is redundant and repeats later
+freshdata <- freshdata %>%
+  select(-Protocol, -Dose_iu, Drug)
+```
+
+## Second scans
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Second_scan_endometrium = round(as.numeric(Second_scan_endometrium), 2),
+    across(
+      c(Second_scan_left_follicles, Second_scan_right_follicles),
+      ~ as.numeric(.x)
+    )
+  )
+```
+
+## FSH and HmG
+
+```{r}
+#Clean
+freshdata <- freshdata %>%
+  mutate(
+    across(c(Fsh_iu, H_mg), clean_stim_string)
+  )
+
+#check
+print(unique(freshdata$Fsh_iu))
+
+#manual corrections
+freshdata <- freshdata %>%
+  mutate(
+    Fsh_iu = case_when(
+      Unique_number == "8029938C" ~ "225 (D1-9)",
+      Unique_number == "8239838A" ~ "225 (D1-5), 150 (D6-8), 225 (D9-12)",
+      TRUE ~ Fsh_iu
+    )
+  )
+print(unique(freshdata$Fsh_iu)) #30 different FSH doses
+
+print(unique(freshdata$H_mg)) #16 different H_mg doses
+
+##Parse and derive parameters - FSH
+freshdata <- freshdata %>%
+  mutate(parsed = map(Fsh_iu, parse_stimulation, prefix = "FSH")) %>%
+  unnest(parsed)
+#relocate
+freshdata <- freshdata %>%
+  relocate(starts_with("FSH_"), .after = Fsh_iu)
+
+##Parse and derive parameters - hMG
+freshdata <- freshdata %>%
+  mutate(parsed = map(H_mg, parse_stimulation, prefix = "hMG")) %>%
+  unnest(parsed)
+#relocate
+freshdata <- freshdata %>%
+  relocate(starts_with("hMG_"), .after = H_mg)
+
+#drop original Fsh_iu and H_mg columns
+freshdata <- freshdata %>%
+  select(-Fsh_iu, -H_mg, -Total_hmg, -Total_gonal_f_iu)
+```
+
+## Trigger
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(Trigger_h_cg = clean_trigger_string(Trigger_h_cg))
+
+##Derive parameters from triggers
+freshdata <- freshdata %>%
+  mutate(
+    #Extract drugs --> trigger mechanism
+    has_hcg = str_detect(Trigger_h_cg, regex("Ovitrelle", ignore_case = TRUE)),
+    has_agonist = str_detect(Trigger_h_cg, regex("Buserelin", ignore_case = TRUE)),
+    #Extract dose
+    hCG_trigger_dose = ifelse(
+      has_hcg,
+      as.numeric(str_extract(
+        str_extract(Trigger_h_cg, "Ovitrelle\\s*\\d+"),
+      "\\d+"
+      )),
+      0
+    ),
+    GnRH_agonist_trigger_dose = ifelse(
+      has_agonist,
+      as.numeric(str_extract(
+        str_extract(Trigger_h_cg, "Buserelin\\s*\\d+"),
+        "\\d+"
+      )),
+      0
+    ),
+    #Mechanism
+    Trigger_mechanism = case_when(
+      has_hcg & has_agonist ~ "Dual",
+      has_hcg ~ "hCG",
+      has_agonist ~ "GnRH_agonist",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(-has_hcg, -has_agonist)
+
+##Relocate
+freshdata <- freshdata %>%
+  relocate(
+    Trigger_mechanism,
+    hCG_trigger_dose,
+    GnRH_agonist_trigger_dose,
+    .after = Trigger_h_cg
+  )
+
+#Remove original H_cg_trigger column
+freshdata <- freshdata %>%
+  select(-Trigger_h_cg)
+```
+
+## Other medication
+
+```{r}
+print(unique(freshdata$Other_medications))
+
+##9 patients with other medications entered, info entered in wrong way, should be dual trigger sometimes
+##use to manually correct and to change parameters and derive parameters
+othermeds <- freshdata %>%
+  filter(!is.na(Other_medications) & Other_medications != "") %>%
+  select(
+    Unique_number,
+    Other_medications,
+    Total_other_iu,
+    Trigger_mechanism,
+    GnRH_agonist_trigger_dose,
+    hCG_trigger_dose,
+    Last_day_of_stim
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Trigger_mechanism = case_when(
+      Unique_number %in% c(
+        "2653224K",
+        "8119398Y",
+        "8120863D",
+        "8308873N",
+        "8356317B",
+        "8391436J"
+      ) ~ "Dual",
+      TRUE ~ Trigger_mechanism
+    ),
+    
+    GnRH_agonist_trigger_dose = case_when(
+      Unique_number == "2653224K" ~ 700,
+      Unique_number == "8119398Y" ~ 32,
+      Unique_number == "8120863D" ~ 240,
+      Unique_number == "8308873N" ~ 240,
+      Unique_number == "8356317B" ~ 260,
+      Unique_number == "8391436J" ~ 240,
+      TRUE ~ GnRH_agonist_trigger_dose
+    )
+  )
+```
+
+## Derive progesterone
+
+```{r}
+#progesterone used --> yes or no 
+freshdata <- freshdata %>% 
+  mutate( Progesterone = ifelse(str_detect(Other_medications, "Provera"), 1, 0) )
+
+freshdata <- freshdata %>% 
+  mutate(Progesterone = ifelse(is.na(Progesterone), 0, Progesterone)) 
+
+freshdata <- freshdata %>% 
+  mutate( Progesterone_total_dose = ifelse(Progesterone == 1, Total_other_iu, 0) )
+```
+
+## Fyramadel --\> GnRH antagonist
+
+```{r}
+#Clean
+freshdata <- freshdata %>%
+  mutate(
+    across(c(Fyremadel), clean_stim_string)
+  )
+
+print(unique(freshdata$Fyremadel)) #8 unique doses 
+
+#Parse and derive parameters
+freshdata <- freshdata %>%
+  mutate(parsed_fyr = map(Fyremadel, parse_fyr)) %>%
+  unnest(parsed_fyr)
+#relocate
+freshdata <- freshdata %>%
+  relocate(starts_with("Fyr_"), .after = Fyremadel)
+
+##check
+freshdata %>%
+  select(Fyremadel, Fyr_used, Fyr_start_day, Fyr_end_day, Fyr_duration, Fyr_total_dose) %>%
+  slice_sample(n = 30)
+
+#Restructuring Fyremadel --> GnRH antagonist, allows for different medication names
+freshdata <- freshdata %>%
+  rename_with(~ gsub("^Fyr_", "GnRH_antagonist_", .x), starts_with("Fyr_"))
+
+freshdata <- freshdata %>%
+  select(-Fyremadel, -Total_fyremadel_iu)
+```
+
+## More other medications
+
+```{r}
+#in the other medications column there are other GnRH antagonist drugs: Cetrotide 
+#manual editing by unique number
+freshdata <- freshdata %>%
+  mutate(
+    GnRH_antagonist_used = if_else(
+      Unique_number == "8228365W",
+      1,
+      GnRH_antagonist_used
+    ),
+    GnRH_antagonist_start_day = if_else(
+      Unique_number == "8228365W",
+      6,
+      GnRH_antagonist_start_day
+    ),
+    GnRH_antagonist_end_day = if_else(
+      Unique_number == "8228365W",
+      13,
+      GnRH_antagonist_end_day
+    ),
+    GnRH_antagonist_duration = if_else(
+      Unique_number == "8228365W",
+      8,
+      GnRH_antagonist_duration
+    ),
+    GnRH_antagonist_total_dose = if_else(
+      Unique_number == "8228365W",
+      2000,
+      GnRH_antagonist_total_dose
+    )
+  )
+```
+
+## Fixing introduced NAs due to derived parameters
+
+```{r}
+#Replace with 0
+freshdata <- freshdata %>%
+  mutate(across(
+    matches("FSH_|Hmg_|GnRH_antagonist"),
+    ~replace_na(., 0)
+  ))
+
+freshdata <- freshdata %>%
+  mutate(across(
+    starts_with("Hmg_change_day"),
+    as.integer
+  ))
+```
+
+## Convert binary categorical variables to numeric
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    across(
+      c(PGD, Male_factor),
+      convert_binary_numeric
+    )
+  )
+```
+
+## Checking data structure
+
+```{r}
+#ensuring numeric
+str(freshdata)
+```
+
+## Drop redundant parameter and reorganise
+
+```{r}
+freshdata <- freshdata %>%
+  select(-Other_medications, -Total_other_iu, -Drug)
+
+freshdata <- freshdata %>%
+  relocate(
+    FSH_used,
+    hMG_used,
+    .after = Protocol_type
+  )
+
+cat("Final dataset size:", dim(freshdata), "\n")
+```
+
+## Save
+
+```{r}
+write_csv(
+  freshdata,
+  here("data", "processed", "freshdata_cleaned.csv")
+)
+```
