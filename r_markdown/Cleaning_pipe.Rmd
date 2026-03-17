@@ -13,6 +13,7 @@ library(stringr)
 library(janitor)
 
 library(here)
+here::here()
 
 #Load functions scripts needed for this pipeline
 source(here("scripts", "cleaning_helpers.R"))
@@ -116,7 +117,7 @@ freshdata <- freshdata %>%
 freshdata <- standardise_missing_values(freshdata)
 ```
 
-##Derive PGD
+## Derive PGD
 
 ```{r}
 freshdata <- freshdata %>%
@@ -134,50 +135,9 @@ freshdata <- freshdata %>%
 ## Aetiology
 
 ```{r}
-male_terms <- c("Azoospermia","Male Factor","Male Factor Other","Oligozoospermia","Sperm Donor","OAT","Teratoma","terato")
-male_pattern <- paste(male_terms, collapse = "|")
-
 freshdata <- freshdata %>%
   mutate(
-    ##Clean Aetiology column with categorical clean function
-    Aetiology = Aetiology %>%
-      clean_categorical() %>%
-      ##Standardise ovulation disorder to PCO
-      str_replace_all(regex("Ovulation Disorder[s]?", ignore_case = TRUE), "PCO") %>%
-      ##Remove introduced duplicate PCO combinations
-      str_replace_all("\\bPCO \\+ PCO\\b", "PCO") %>%
-      ##Remove PGD term
-      str_remove_all(regex("\\bPGD\\b", ignore_case = TRUE)) %>%
-      ##Remove male factor terms
-      str_remove_all(regex(male_pattern, ignore_case = TRUE)) %>%
-      ##Capitalize string after "+"
-      str_replace_all("\\+\\s*([a-z])", ~ paste0("+ ", toupper(.x))) %>%
-      ##Clean again
-      clean_categorical() %>%
-      ##Replace empty with No Female Factor
-      (\(x) ifelse(x == "" | is.na(x), "No Female Factor", x))(),
-  )
-```
-
-## Typos
-
-```{r}
-typos <- c(
-  "Same Sex Relatonship" = "Same Sex Relationship",
-  "Researve" = "Reserve"
-)
-
-dor_terms <- c(
-  "Fertility Preservation low ovarian reserve + endometriosis" = "DOR + Endometriosis",
-    "Fertility Preservation low ovarian reserve" = "DOR",
-  "Diminished Ovarian Reserve" = "DOR",
-  "Low Ovarian Reserve" = "DOR"
-)
-
-freshdata <- freshdata %>%
-  mutate(
-    Aetiology = str_replace_all(Aetiology, typos),
-    Aetiology = str_replace_all(Aetiology, dor_terms)
+    Aetiology = clean_aetiology(Aetiology)
   )
 ```
 
@@ -227,6 +187,19 @@ freshdata %>%
   count(Funding)
 ```
 
+## Male Factor
+```{r}
+unique(freshdata$Male_factor)
+
+freshdata <- freshdata %>%
+  mutate(
+    Male_factor = str_to_title(Male_factor)
+  )
+
+#QC
+unique(freshdata$Male_factor)
+```
+
 ## Infertility Duration
 
 ```{r}
@@ -273,6 +246,8 @@ str(freshdata$Age) #num
 ## Baselines
 
 ```{r}
+print(unique(freshdata$Baseline_FSH))
+
 freshdata <- freshdata %>%
   mutate(
     across(
@@ -613,6 +588,15 @@ freshdata <- freshdata %>%
       convert_binary_numeric
     )
   )
+
+freshdata <- freshdata %>%
+  mutate(
+    Funding = case_when(
+      Funding == "NHS" ~ 1,
+      Funding == "PP" ~ 0,
+      TRUE ~ NA_real_
+    )
+    )
 ```
 
 ## Checking data structure
@@ -633,6 +617,13 @@ freshdata <- freshdata %>%
     FSH_used,
     hMG_used,
     .after = Protocol_type
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Progesterone,
+    Progesterone_total_dose,
+    .after = hMG_avg_daily
   )
 
 cat("Final dataset size:", dim(freshdata), "\n")

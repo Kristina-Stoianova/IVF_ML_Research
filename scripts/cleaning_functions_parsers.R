@@ -1,3 +1,42 @@
+#Cleaning Aetiology
+clean_aetiology <- function(x) {
+  male_terms <- c(
+    "Azoospermia","Male Factor","Male Factor Other",
+    "Oligozoospermia","Sperm Donor","OAT","Teratoma","terato"
+  )
+  male_pattern <- paste(male_terms, collapse = "|")
+  typos <- c(
+    "Same Sex Relatonship" = "Same Sex Relationship",
+    "Researve" = "Reserve"
+    )
+  dor_terms <- c(
+    "Fertility Preservation low ovarian reserve + endometriosis" = "DOR + Endometriosis",
+    "Fertility Preservation low ovarian reserve" = "DOR",
+    "Diminished Ovarian Reserve" = "DOR",
+    "Low Ovarian Reserve" = "DOR"
+  )
+  
+  x %>%
+    clean_categorical() %>%
+    str_replace_all(typos) %>%
+    #standardize ovulation disorder to PCO
+    str_replace_all(regex("Ovulation Disorder[s]?", ignore_case = TRUE), "PCO") %>%
+    #standardize DOR terms
+    str_replace_all(dor_terms) %>%
+    #remove duplicate PCO combinations
+    str_replace_all("\\bPCO \\+ PCO\\b", "PCO") %>%
+    #remove PGD
+    str_remove_all(regex("\\bPGD\\b", ignore_case = TRUE)) %>%
+    #remove male factor
+    str_remove_all(regex(male_pattern, ignore_case = TRUE)) %>%
+    #capitalize after "+"
+    str_replace_all("\\+\\s*([a-z])", ~ paste0("+ ", toupper(.x))) %>%
+    #clean again
+    clean_categorical() %>%
+    #replace empty
+    (\(x) ifelse(x == "" | is.na(x), "No Female Factor", x))()
+}
+
 #Stimulation cleaning function: applied to FSH, Hmg, Fyramedel
 clean_stim_string <- function(x) {
   x %>%
