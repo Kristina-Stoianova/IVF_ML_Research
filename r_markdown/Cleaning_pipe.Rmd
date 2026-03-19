@@ -67,7 +67,6 @@ drop_cols <- c(
   "Day_of_2nd_scan",
   "Date_of_additional_scan",
   "Dx_last_scan_prior_to_trigger",
-  "Semen_volume_ml",
   "Day_of_trigger",
   "Date_of_ec",
   "Icsi_ivf"
@@ -75,7 +74,6 @@ drop_cols <- c(
 
 freshdata <- freshdata %>%
   select(
-    -contains("sperm"),
     -any_of(drop_cols)
   )
 
@@ -108,7 +106,16 @@ freshdata <- freshdata %>%
     Final_left_follicles = Follicles_left,
     Final_right_follcles = Follicles_right,
     Final_follicle_size = Foll_size_mm,
-    Final_endometrium_ec = Endo_at_ec_mm
+    Final_endometrium_ec = Endo_at_ec_mm,
+    Pre_wash_sperm_conc = Pre_wash_sperm_concentration_mil_ml,
+    Pre_wash_sperm_motility = Pre_wash_sperm_motility_percent,
+    Pre_wash_normal_sperm_morphology = Pre_wash_sperm_morphology_normal_forms_percent,
+    Post_wash_sperm_conc = Post_wash_sperm_concentration_mil_ml,
+    Post_wash_sperm_motility = Post_wash_sperm_motility_percent,
+    Semen_vol = Semen_volume_ml,
+    Sperm_prep = Sperm_prep_dg_mini_none,
+    Sperm_mobility = Sperm_mobil_y_n, 
+    Sperm_source = Sperm_source_f_fz
   )
 
 ```
@@ -320,7 +327,12 @@ freshdata %>% count(Drug) #30 rFSH, 15 hMG, 20 Dual, 25 NA
 
 ##Drop original Protocol column, and derived Drug and Dose_iu columns as information is redundant and repeats later
 freshdata <- freshdata %>%
-  select(-Protocol, -Dose_iu, Drug)
+  select(-Protocol, -Dose_iu, -Drug)
+```
+
+## Cycle
+```{r}
+str(freshdata$Cycle_no)
 ```
 
 ## Second scans
@@ -578,13 +590,73 @@ freshdata <- freshdata %>%
   ))
 ```
 
+## Sperm parameters
+
+```{r}
+sperm_cols <- c("Pre_wash_sperm_conc", "Pre_wash_sperm_motility", "Pre_wash_normal_sperm_morphology", "Post_wash_sperm_conc", "Post_wash_sperm_motility", "Semen_vol")
+
+freshdata <- freshdata %>%
+  mutate(
+    across(all_of(sperm_cols), clean_sperm_numeric)
+  )
+
+#Manual correction
+freshdata <- freshdata %>%
+  mutate(
+    Pre_wash_sperm_motility = ifelse(
+      Pre_wash_sperm_motility == "Only 2 twitching seen on Makler",
+      0,
+      Pre_wash_sperm_motility
+    )
+  )
+
+#reorganise
+freshdata <- freshdata %>%
+  relocate(
+    Sperm_source,
+    .after = Day_of_ec
+  )
+
+#sperm source
+print(unique(freshdata$Sperm_source))
+
+##can later convert to binary
+freshdata <- freshdata %>%
+  mutate(
+    Sperm_source = case_when(
+      stringr::str_detect(Sperm_source, "FZ \\(Donor\\)") ~ "FZ_donor",
+      stringr::str_detect(Sperm_source, "FZ \\(Partner\\)") ~ "FZ_partner",
+      Sperm_source == "F" ~ "F",
+      TRUE ~ NA_character_
+    )
+  )
+
+print(unique(freshdata$Sperm_prep))
+```
+
+## Days
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    across(c(Last_day_of_stim, Day_of_ec), parse_day)
+  )
+```
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    No_fertilised = as.numeric(as.character(No_fertilised)),
+  )
+```
+
 ## Convert binary categorical variables to numeric
 
 ```{r}
 freshdata <- freshdata %>%
   mutate(
     across(
-      c(PGD, Male_factor),
+      c(PGD, Male_factor, Sperm_mobility),
       convert_binary_numeric
     )
   )
@@ -606,11 +678,19 @@ freshdata <- freshdata %>%
 str(freshdata)
 ```
 
+## Derive fertilisation rate
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Fertilisation_rate = No_fertilised / No_mature_eggs
+  )
+```
+
 ## Drop redundant parameter and reorganise
 
 ```{r}
 freshdata <- freshdata %>%
-  select(-Other_medications, -Total_other_iu, -Drug)
+  select(-Other_medications, -Total_other_iu, -Trigger_mechanism)
 
 freshdata <- freshdata %>%
   relocate(

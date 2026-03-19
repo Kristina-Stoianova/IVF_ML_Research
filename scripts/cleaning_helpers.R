@@ -7,7 +7,7 @@ library(stringr)
 
 #standardize missing values to N/A
 standardise_missing_values <- function(df) {
-  missing_vals <- c("", "na", "n/a", "missing", "_", "not on bbs", "incomplete chart", "incomplete data", "see comments")
+  missing_vals <- c("", "na", "n/a", "missing", "_", "not on bbs", "incomplete chart", "incomplete data", "see comments", "-", "tftc")
   df %>%
     dplyr::mutate(
       across(
@@ -40,6 +40,15 @@ clean_baseline <- function(x) {
     stringr::str_remove("\\s*\\(.*\\)") %>%  #remove "(date)"
     as.numeric() %>% #convert to numeric
     round(1) #round to 1dp
+}
+
+#clean sperm parameters
+clean_sperm_numeric <- function(x) {
+  x %>%
+    stringr::str_squish() %>%                  # remove extra spaces
+    stringr::str_remove("%") %>%               # remove % if present
+    as.numeric() %>%                          # convert to numeric
+    round(1)                                  # round to 1dp
 }
 
 #Convert Y/N columns to numeric 

@@ -204,3 +204,10 @@ parse_fyr <- function(x) {
     Fyr_total_dose = dose * duration
   )
 }
+
+parse_day <- function(x) {
+  x %>%
+    stringr::str_squish() %>%
+    stringr::str_extract("\\d+") %>%   # only keep numbers
+    as.numeric()
+}
