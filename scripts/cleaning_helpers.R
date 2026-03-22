@@ -50,10 +50,3 @@ clean_sperm_numeric <- function(x) {
     as.numeric() %>%                          # convert to numeric
     round(1)                                  # round to 1dp
 }
-
-#Convert Y/N columns to numeric 
-convert_binary_numeric <- function(x){
-  ifelse(x == "Y", 1,
-         ifelse(x == "N", 0, NA))
-}
-
