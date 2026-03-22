@@ -104,7 +104,7 @@ freshdata <- freshdata %>%
     Second_scan_follicle_size = X2nd_scan_follicle_size,
     Second_scan_endometrium = X2nd_endo_mm,
     Final_left_follicles = Follicles_left,
-    Final_right_follcles = Follicles_right,
+    Final_right_follicles = Follicles_right,
     Final_follicle_size = Foll_size_mm,
     Final_endometrium_ec = Endo_at_ec_mm,
     Pre_wash_sperm_conc = Pre_wash_sperm_concentration_mil_ml,
@@ -117,7 +117,6 @@ freshdata <- freshdata %>%
     Sperm_mobility = Sperm_mobil_y_n, 
     Sperm_source = Sperm_source_f_fz
   )
-
 ```
 
 ```{r}
@@ -504,9 +503,17 @@ freshdata <- freshdata %>%
 
 freshdata <- freshdata %>% 
   mutate( Progesterone_total_dose = ifelse(Progesterone == 1, Total_other_iu, 0) )
+
+str(freshdata$Progesterone)
+str(freshdata$Progesterone_total_dose)
+
+freshdata <- freshdata %>%
+  mutate(
+    Progesterone_total_dose = as.numeric(as.character(Progesterone_total_dose)),
+  )
 ```
 
-## Fyramadel --\> GnRH antagonist
+## Fyramadel --> GnRH antagonist
 
 ```{r}
 #Clean
@@ -590,6 +597,18 @@ freshdata <- freshdata %>%
   ))
 ```
 
+## Final scans
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Final_endometrium_ec = round(as.numeric(Final_endometrium_ec), 2),
+    across(
+      c(Final_left_follicles, Final_right_follicles),
+      ~ as.numeric(.x)
+    )
+  )
+```
+
 ## Sperm parameters
 
 ```{r}
@@ -610,7 +629,7 @@ freshdata <- freshdata %>%
     )
   )
 
-#reorganise
+#reorganize
 freshdata <- freshdata %>%
   relocate(
     Sperm_source,
@@ -650,34 +669,6 @@ freshdata <- freshdata %>%
   )
 ```
 
-## Convert binary categorical variables to numeric
-
-```{r}
-freshdata <- freshdata %>%
-  mutate(
-    across(
-      c(PGD, Male_factor, Sperm_mobility),
-      convert_binary_numeric
-    )
-  )
-
-freshdata <- freshdata %>%
-  mutate(
-    Funding = case_when(
-      Funding == "NHS" ~ 1,
-      Funding == "PP" ~ 0,
-      TRUE ~ NA_real_
-    )
-    )
-```
-
-## Checking data structure
-
-```{r}
-#ensuring numeric
-str(freshdata)
-```
-
 ## Derive fertilisation rate
 ```{r}
 freshdata <- freshdata %>%
@@ -706,6 +697,7 @@ freshdata <- freshdata %>%
     .after = hMG_avg_daily
   )
 
+str(freshdata)
 cat("Final dataset size:", dim(freshdata), "\n")
 ```
 
@@ -716,4 +708,6 @@ write_csv(
   freshdata,
   here("data", "processed", "freshdata_cleaned.csv")
 )
+
+names(freshdata)
 ```
