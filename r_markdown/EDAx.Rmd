@@ -1,0 +1,527 @@
+---
+title: "EDAx"
+output: html_document
+date: "2026-03-19"
+---
+
+```{r}
+library(naniar)
+library(tidyverse)
+library(gridExtra)
+library(corrplot)
+library(pheatmap)
+library(cluster)
+library(factoextra)
+library(here)
+here::here()
+```
+
+```{r}
+freshdata <- read_csv(
+  here("data","processed","freshdata_cleaned.csv"),
+  name_repair = "minimal"
+)
+
+freshdata$Unique_number <- NULL
+##for now
+freshdata$Baseline_follicle_size <- NULL
+freshdata$Second_scan_follicle_size <- NULL
+freshdata$Final_follicle_size <- NULL
+
+## Define outcome variables
+outcomes <- c("No_mature_eggs", "No_fertilised", "Fertilisation_rate")
+
+predictors <- setdiff(names(freshdata), c(outcomes))
+
+## separate continous and categorical predictors
+categorical_vars <- c("Aetiology", "PGD", "Male_factor", "Funding", "Treatment", "Protocol_type", "Sperm_source", "Sperm_prep", "Sperm_mobility")
+continuous_vars <- setdiff(predictors, categorical_vars)
+```
+
+## MISSINGNESS
+```{r}
+# Table: percentage missing per variable, sorted descending
+miss_table <- freshdata %>%
+  summarise(across(everything(), ~ mean(is.na(.)) * 100)) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Pct_missing") %>%
+  arrange(desc(Pct_missing)) %>%
+  filter(Pct_missing > 0)
+ 
+print(miss_table, n = 50)
+ 
+# Flag variables with >20% missingness — candidates for removal
+high_miss <- miss_table %>% filter(Pct_missing > 20)
+print(high_miss)
+```
+```{r}
+# Plot 1: missingness bar chart
+ggplot(miss_table, aes(x = reorder(Variable, Pct_missing), y = Pct_missing)) +
+  geom_col(fill = "#5DCAA5") +
+  coord_flip() +
+  labs(title = "Percentage missing per variable",
+       x = NULL, y = "% missing") +
+  theme_minimal()
+```
+```{r}
+# Plot 2: missingness heatmap — shows co-missingness patterns
+vis_miss(freshdata, sort_miss = TRUE) +
+  labs(title = "Missingness heatmap") +
+  theme(axis.text.x = element_text(angle = 90, size = 7))
+```
+## Descriptive Statistics
+```{r}
+desc_stats <- describe(freshdata[, continuous_vars])
+print(desc_stats[, c("n","mean","sd","median","mad","min","max","skew","kurtosis")])
+```
+## Distributions
+```{r}
+plot_distributions <- function(vars, data, batch_size = 12) {
+  batches <- split(vars, ceiling(seq_along(vars) / batch_size))
+  for (i in seq_along(batches)) {
+    plots <- lapply(batches[[i]], function(v) {
+      ggplot(data, aes(x = .data[[v]])) +
+        geom_histogram(aes(y = after_stat(density)), bins = 30,
+                       fill = "#9FE1CB", colour = "white", alpha = 0.8) +
+        geom_density(colour = "#0F6E56", linewidth = 0.8) +
+        labs(title = v, x = NULL, y = NULL) +
+        theme_minimal(base_size = 9)
+    })
+    do.call(gridExtra::grid.arrange, c(plots, ncol = 3))
+  }
+}
+ 
+plot_distributions(continuous_vars, freshdata)
+```
+
+```{r}
+# Outcome variable distributions
+outcome_plots <- lapply(outcomes, function(v) {
+  ggplot(freshdata, aes(x = .data[[v]])) +
+    geom_histogram(aes(y = after_stat(density)), bins = 30,
+                   fill = "#AFA9EC", colour = "white") +
+    geom_density(colour = "#3C3489", linewidth = 1) +
+    labs(title = paste("Distribution:", v)) +
+    theme_minimal()
+})
+
+do.call(gridExtra::grid.arrange, c(outcome_plots, ncol = 2))
+```
+## Correlation
+```{r}
+#Big heatmap of all variables
+cont_data <- freshdata[, continuous_vars] %>%
+  select(where(~ sum(!is.na(.)) > 10))  # drop near-empty columns
+
+#Remove columns with zero variance first
+cont_data_clean <- cont_data %>%
+  select(where(~ var(., na.rm = TRUE) > 0)) %>%   # drop zero variance
+  select(where(~ sum(!is.na(.)) > 10))              # drop near-empty
+#Compute correlation
+cor_matrix <- cor(cont_data_clean, method = "spearman", use = "pairwise.complete.obs")
+
+# Check for any remaining NA/NaN in the matrix
+cat("Any NAs in correlation matrix:", anyNA(cor_matrix), "\n")
+
+# Remove any rows/cols that still have NA correlations
+na_cols <- apply(cor_matrix, 2, function(x) any(is.na(x)))
+cat("Columns with NA correlations:", names(na_cols)[na_cols], "\n")
+cor_matrix <- cor_matrix[!na_cols, !na_cols]
+
+# Now plot safely
+corrplot(cor_matrix,
+         method = "color",
+         type = "upper",           # just the upper triangle
+         order = "hclust",
+         hclust.method = "ward.D2",
+         tl.cex = 0.4,
+         tl.col = "black",
+         diag = FALSE,             # hide the diagonal (self-correlations = 1)
+         col = colorRampPalette(c("#185FA5","white","#993C1D"))(200),
+         title = "Spearman correlation — all continuous predictors (clustered)",
+         mar = c(0,0,2,0))
+
+```
+## Flag highly correlated pairs
+```{r}
+cor_df <- as.data.frame(as.table(cor_matrix)) %>%
+  rename(Var1 = Var1, Var2 = Var2, r = Freq) %>%
+  filter(Var1 != Var2, abs(r) > 0.7) %>%
+  mutate(pair = paste(pmin(as.character(Var1), as.character(Var2)),
+                      pmax(as.character(Var1), as.character(Var2)), sep = " ~ ")) %>%
+  distinct(pair, .keep_all = TRUE) %>%
+  arrange(desc(abs(r)))
+
+print(cor_df[, c("pair", "r")], n = 40)
+
+###this helps with parameter reduction
+```
+
+## Each predictor vs. primary outcome: number of mature eggs
+```{r}
+#Remove zero variance variables first
+valid_vars <- continuous_vars[sapply(continuous_vars, function(v) {
+  x <- suppressWarnings(as.numeric(as.character(freshdata[[v]])))
+  sd(x, na.rm = TRUE) > 0 && sum(!is.na(x)) > 10
+})]
+
+print(continuous_vars[!continuous_vars %in% valid_vars])
+
+#Now run correlation safely
+outcome_cor <- sapply(valid_vars, function(v) {
+  x <- suppressWarnings(as.numeric(as.character(freshdata[[v]])))
+  cor(x, freshdata$No_mature_eggs, method = "spearman", use = "complete.obs")
+})
+
+outcome_cor_df <- data.frame(
+  Variable = names(outcome_cor),
+  r = outcome_cor
+) %>%
+  filter(!is.na(r)) %>%
+  arrange(desc(abs(r)))
+
+ggplot(outcome_cor_df, aes(x = reorder(Variable, r), y = r,
+                            fill = r > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c("#D85A30","#1D9E75"), guide = "none") +
+  coord_flip() +
+  labs(title = "Spearman correlation with Number of mature eggs",
+       x = NULL, y = "Spearman r") +
+  theme_minimal(base_size = 9)
+```
+```{r}
+#Top correlated predictors with No_mature_eggs
+top_correlations <- outcome_cor_df %>%
+  arrange(desc(abs(r))) %>%
+  mutate(
+    r = round(r, 3),
+    abs_r = round(abs(r), 3),
+    direction = ifelse(r > 0, "positive", "negative")
+  )
+
+#Print top 20
+print(top_correlations, n = 20)
+
+#Or set your own threshold — e.g. only show |r| > 0.3
+#strong_correlations <- top_correlations %>% filter(abs_r > 0.3)
+#print(strong_correlations)
+
+#Save to CSV for your report
+#write.csv(top_correlations, "outcome_correlations.csv", row.names = FALSE)
+```
+
+## Each predictor vs. primary outcome: number of mature eggs
+```{r}
+#Now run correlation safely
+outcome_cor1 <- sapply(valid_vars, function(v) {
+  x <- suppressWarnings(as.numeric(as.character(freshdata[[v]])))
+  cor(x, freshdata$Fertilisation_rate, method = "spearman", use = "complete.obs")
+})
+
+outcome_cor1_df <- data.frame(
+  Variable = names(outcome_cor1),
+  r = outcome_cor1
+) %>%
+  filter(!is.na(r)) %>%
+  arrange(desc(abs(r)))
+
+ggplot(outcome_cor1_df, aes(x = reorder(Variable, r), y = r,
+                            fill = r > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c("#D85A30","#1D9E75"), guide = "none") +
+  coord_flip() +
+  labs(title = "Spearman correlation with Fertilisation Rate",
+       x = NULL, y = "Spearman r") +
+  theme_minimal(base_size = 9)
+```
+```{r}
+#Top correlated predictors with Fertilisation_rate
+top_correlations1 <- outcome_cor1_df %>%
+  arrange(desc(abs(r))) %>%
+  mutate(
+    r = round(r, 3),
+    abs_r = round(abs(r), 3),
+    direction = ifelse(r > 0, "positive", "negative")
+  )
+
+#Print top 20
+print(top_correlations1, n = 20)
+```
+
+## Stats
+
+```{r}
+freshdata$Protocol_type <- as.factor(freshdata$Protocol_type)
+freshdata$Treatment <- as.factor(freshdata$Treatment)
+freshdata$Aetiology <- as.factor(freshdata$Aetiology)
+
+print(levels(freshdata$Protocol_type))
+print(levels(freshdata$Treatment))
+print(levels(freshdata$Aetiology))
+```
+## Test whether fertilisation rates differs across categorical groups
+
+```{r}
+kw_protocol <- kruskal.test(Fertilisation_rate ~ Protocol_type, data = freshdata)
+print(kw_protocol)
+```
+```{r}
+kw_treatment <- kruskal.test(Fertilisation_rate ~ Treatment, data = freshdata)
+print(kw_treatment)
+```
+```{r}
+kw_aetiology <- kruskal.test(Fertilisation_rate ~ Aetiology, data = freshdata)
+print(kw_aetiology)
+```
+## Test whether number of mature oocytes differs between categorical variables
+```{r}
+kw_protocol1 <- kruskal.test(No_mature_eggs ~ Protocol_type, data = freshdata)
+print(kw_protocol1)
+```
+```{r}
+kw_treatment1 <- kruskal.test(No_mature_eggs ~ Treatment, data = freshdata)
+print(kw_treatment1)
+```
+```{r}
+kw_aetiology1 <- kruskal.test(No_mature_eggs ~ Aetiology, data = freshdata)
+print(kw_aetiology1)
+```
+## Clustering
+
+```{r}
+cluster_vars <- c("Age", "Baseline_total_follicles", "FSH_total_dose", "FSH_duration", "Last_day_of_stim", "Final_right_follicles","Final_left_follicles", "No_mature_eggs", "Fertilisation_rate")
+
+
+# Extract and clean clustering variables
+cluster_data_raw <- freshdata[, intersect(cluster_vars, names(freshdata))] %>%
+  mutate(across(everything(), 
+                ~ suppressWarnings(as.numeric(as.character(.)))))
+
+#Keep track of which rows are complete (needed to map clusters back)
+complete_rows <- which(complete.cases(cluster_data_raw))
+cat("Patients with complete clustering variables:", length(complete_rows), "\n")
+cat("Patients dropped due to missing values:", nrow(freshdata) - length(complete_rows), "\n")
+
+```
+
+```{r}
+# Scale the data — essential before clustering
+cluster_scaled <- cluster_data_raw[complete_rows, ] %>% scale()
+```
+
+```{r}
+wss <- sapply(1:8, function(k) {
+  pam(cluster_scaled, k)$objective[1]
+})
+
+##Elbow plot suggests 3 clusters is optimal
+plot(1:8, wss, type = "b", pch = 19, col = "#1D9E75",
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster distance",
+     main = "Elbow method — optimal k")
+```
+```{r}
+# Silhouette widths across k values
+avg_sil <- sapply(2:8, function(k) {
+  p <- pam(cluster_scaled, k)
+  s <- silhouette(p$clustering, dist(cluster_scaled))
+  mean(s[, 3])
+})
+plot(2:8, avg_sil, type = "b", pch = 19, col = "#7F77DD",
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width",
+     main = "Silhouette method — optimal k")
+abline(v = which.max(avg_sil) + 1, lty = 2, col = "red")
+cat("Optimal k by silhouette:", which.max(avg_sil) + 1, "\n")
+
+##3 clusters optimal
+```
+
+```{r}
+#Set k and run PAM
+k <- 3
+set.seed(42)
+pam_result <- pam(cluster_scaled, k)
+
+cat("\nCluster sizes:\n")
+print(table(pam_result$clustering))
+```
+
+```{r}
+sil <- silhouette(pam_result$clustering, dist(cluster_scaled))
+plot(sil,
+     col = c("#1D9E75","#7F77DD","#D85A30"),
+     border = NA,
+     main = "Silhouette plot — k=3")
+cat("Average silhouette width:", round(mean(sil[, 3]), 3), "\n")
+```
+
+```{r}
+clusplot(cluster_scaled,
+         pam_result$clustering,
+         color = TRUE,
+         col.p = c("#1D9E75","#7F77DD","#D85A30")[pam_result$clustering],
+         col.clus = c("#1D9E75","#7F77DD","#D85A30"),
+         shade = FALSE,
+         lines = 0,
+         main = "PAM clustering — k=3",
+         sub = "")
+```
+
+## Map clusters back to original data
+```{r}
+freshdata$cluster <- NA
+freshdata$cluster[complete_rows] <- pam_result$clustering
+freshdata$cluster <- as.factor(freshdata$cluster)
+
+#Check it worked
+cat("Cluster assignments:\n")
+print(table(freshdata$cluster, useNA = "always"))
+```
+## Cluster stats
+```{r}
+cluster_summary <- freshdata %>%
+  filter(!is.na(cluster)) %>%
+  group_by(cluster) %>%
+  summarise(
+    n                  = n(),
+    median_mature_eggs = round(median(No_mature_eggs,     na.rm = TRUE), 1),
+    IQR_mature_eggs    = round(IQR(No_mature_eggs,        na.rm = TRUE), 1),
+    median_fert_rate   = round(median(Fertilisation_rate, na.rm = TRUE), 3),
+    median_age         = round(median(Age,                na.rm = TRUE), 1),
+    median_total_fol         = round(median(Baseline_total_follicles,       na.rm = TRUE), 2),
+    median_FSH_dose    = round(median(FSH_total_dose,     na.rm = TRUE), 0),
+    median_FSH_duration = round(median(FSH_duration, na.rm = TRUE), 0),
+    median_stim_days   = round(median(Last_day_of_stim,   na.rm = TRUE), 1)
+)
+print(cluster_summary)
+#write.csv(cluster_summary, "cluster_characterisation.csv", row.names = FALSE)
+
+#Age", "Baseline_total_follicles", "FSH_total_dose", "FSH_duration", "Last_day_of_stim", "Final_right_follicles","Final_left_follicles", "No_mature_eggs", "Fertilisation_rate
+```
+
+```{r}
+# Mature oocytes by cluster
+ggplot(freshdata %>% filter(!is.na(cluster)),
+       aes(x = cluster, y = No_mature_eggs, fill = cluster)) +
+  geom_boxplot(outlier.shape = 16, outlier.alpha = 0.5, alpha = 0.8) +
+  geom_jitter(width = 0.15, alpha = 0.3, size = 1.5) +
+  scale_fill_manual(values = c("#9FE1CB","#CECBF6","#F5C4B3"), guide = "none") +
+  labs(title = "Mature oocytes by cluster",
+       x = "Cluster", y = "No. mature oocytes") +
+  theme_minimal()
+```
+
+```{r}
+# Fertilisation rate by cluster  
+ggplot(freshdata %>% filter(!is.na(cluster)),
+       aes(x = cluster, y = Fertilisation_rate, fill = cluster)) +
+  geom_boxplot(outlier.shape = 16, outlier.alpha = 0.5, alpha = 0.8) +
+  geom_jitter(width = 0.15, alpha = 0.3, size = 1.5) +
+  scale_fill_manual(values = c("#9FE1CB","#CECBF6","#F5C4B3"), guide = "none") +
+  labs(title = "Fertilisation rate by cluster",
+       x = "Cluster", y = "Fertilisation rate") +
+  theme_minimal()
+```
+
+
+
+```{r}
+
+# AMH by cluster — shows whether clusters reflect ovarian reserve
+#ggplot(freshdata %>% filter(!is.na(cluster)),
+     #  aes(x = cluster, y = Baseline_AMH, fill = cluster)) +
+#  geom_boxplot(outlier.shape = 16, outlier.alpha = 0.5, alpha = 0.8) +
+ # geom_jitter(width = 0.15, alpha = 0.3, size = 1.5) +
+ # scale_fill_manual(values = c("#9FE1CB","#CECBF6","#F5C4B3"), guide = "none") +
+ # labs(title = "Baseline AMH by cluster",
+  #     x = "Cluster", y = "AMH") +
+ # theme_minimal()
+
+##8
+
+#kw_eggs <- kruskal.test(No_mature_eggs ~ cluster,
+ #                        data = freshdata %>% filter(!is.na(cluster)))
+#kw_fert <- kruskal.test(Fertilisation_rate ~ cluster,
+ #                        data = freshdata %>% filter(!is.na(cluster)))
+#
+#cat("\nKruskal-Wallis: mature oocytes across clusters\n")
+#print(kw_eggs)
+#cat("\nKruskal-Wallis: fertilisation rate across clusters\n")
+#print(kw_fert)
+
+# Post-hoc if significant
+#if (kw_eggs$p.value < 0.05) {
+ # cat("\nDunn post-hoc — mature oocytes:\n")
+  #dunn.test(freshdata$No_mature_eggs[!is.na(freshdata$cluster)],
+   #         g = freshdata$cluster[!is.na(freshdata$cluster)],
+    #        method = "bonferroni", label = TRUE)
+
+```
+
+```{r}
+dist_matrix <- dist(cluster_scaled, method = "euclidean")
+hclust_result <- hclust(dist_matrix, method = "ward.D2")
+
+plot(hclust_result,
+     main = "Hierarchical clustering dendrogram",
+     xlab = "Patients",
+     ylab = "Height",
+     cex = 0.4,    # label size — small because many patients
+     hang = -1,    # hang labels at the bottom
+     labels = FALSE)  # hide individual patient labels — too many to read
+
+# Add coloured rectangles to show k=3 clusters
+rect.hclust(hclust_result, k = 3, 
+            border = c("#1D9E75","#7F77DD","#D85A30"))
+
+```
+```{r}
+k <- 3  # use same k as PAM for comparison
+hclust_labels <- cutree(hclust_result, k = k)
+
+cat("\nHierarchical cluster sizes:\n")
+print(table(hclust_labels))
+```
+```{r}
+sil_hclust <- silhouette(hclust_labels, dist_matrix)
+plot(sil_hclust,
+     col = c("#1D9E75","#7F77DD","#D85A30"),
+     border = NA,
+     main = "Silhouette plot — hierarchical clustering k=3")
+
+cat("Average silhouette width:", round(mean(sil_hclust[, 3]), 3), "\n")
+
+```
+
+```{r}
+clusplot(cluster_scaled,
+         hclust_labels,
+         color = TRUE,
+         col.p = c("#1D9E75","#7F77DD","#D85A30")[hclust_labels],
+         col.clus = c("#1D9E75","#7F77DD","#D85A30"),
+         shade = FALSE,
+         lines = 0,
+         main = "Hierarchical clustering — k=3",
+         sub = "")
+```
+```{r}
+freshdata$hclust_cluster <- NA
+freshdata$hclust_cluster[complete_rows] <- hclust_labels
+freshdata$hclust_cluster <- as.factor(freshdata$hclust_cluster)
+```
+
+```{r}
+cat("\nPAM vs hierarchical cluster agreement:\n")
+print(table(PAM = freshdata$cluster, 
+            Hierarchical = freshdata$hclust_cluster,
+            useNA = "no"))
+
+# Agreement rate
+agree <- mean(as.integer(freshdata$cluster) == 
+              as.integer(freshdata$hclust_cluster),
+              na.rm = TRUE)
+cat("Raw agreement rate:", round(agree * 100, 1), "%\n")
+cat("Note: cluster numbers may not match between methods\n")
+cat("Look at the cross-tab to see if clusters correspond\n") 
+```
+
