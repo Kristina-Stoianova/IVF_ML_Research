@@ -1,0 +1,1033 @@
+---
+title: "Analysis1"
+output: html_document
+date: "2026-03-28"
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(naniar)
+library(tidyverse)
+library(gridExtra)
+library(corrplot)
+library(pheatmap)
+library(cluster)
+library(factoextra)
+library(Hmisc)
+library(mice)
+library(here)
+here::here()
+
+freshdata <- read_csv(
+  here("data","processed","freshdata_cleaned1.csv"),
+  name_repair = "minimal"
+)
+```
+
+```{r}
+#minor data changes - dropping, deriving, relocating parameters
+freshdata <- freshdata %>%
+  select(-Baseline_follicle_size, -Second_scan_follicle_size, -Final_follicle_size)
+```
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Final_total_follicles = Final_right_follicles + Final_left_follicles
+  ) %>%
+  relocate(
+    Final_total_follicles,
+    .after = Last_day_of_stim
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Final_follicles_lessthan_11.9,
+    .after = Final_left_follicles
+  )
+```
+
+## Filter first cycle and binary encoding 
+```{r}
+freshdata <- freshdata %>%
+  filter(Cycle_no == 1)
+
+print(table(freshdata$Treatment_type))
+
+##need to add _ to main cleaning pipeline for categorical variables
+
+freshdata <- freshdata %>%
+  mutate(Aetiology_group = case_when(
+    
+    #Female factor group
+    Aetiology %in% c("Tubal Factors", 
+                     "DOR",
+                     "Endometriosis",
+                     "Uterine Factor",
+                     "Endometriosis + Uterine Factor",
+                     "Endometriosis + Tubal Factors",
+                     "PCO",
+                     "DOR + Endometriosis + PCO")  ~ "Female_factor",
+    
+    #Other group
+    Aetiology %in% c("Other",
+                     "Same Sex Relationship",
+                     "Fertility Preservation",
+                     "Single woman",
+                     "Surrogate")           ~ "Other",
+    
+    #Unexplained
+    Aetiology == "Unexplained"              ~ "Unexplained",
+    
+    #No female factor
+    Aetiology %in% c("No Female Factor",
+                     "No female factor")   ~ "No_female_factor",
+  ))
+
+
+freshdata <- freshdata %>%
+  mutate(
+    Treatment_type = case_when(
+      FSH_used == 1 & hMG_used == 0 ~ "FSH_only",
+      FSH_used == 0 & hMG_used == 1 ~ "hMG_only",
+      FSH_used == 1 & hMG_used == 1 ~ "Dual",
+      TRUE ~ "None"
+    )
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Treatment_type,
+    .after = Protocol_type
+  )
+
+#create total stimulation dose
+freshdata <- freshdata %>%
+  mutate(
+    Total_stim_dose = FSH_total_dose + hMG_total_dose
+  ) %>%
+  relocate(
+    Total_stim_dose,
+    .after = hMG_avg_daily
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    hCG_trigger_used = ifelse(!is.na(hCG_trigger_dose) & hCG_trigger_dose > 0, 1, 0),
+    GnRH_trigger_used = ifelse(!is.na(GnRH_agonist_trigger_dose) & GnRH_agonist_trigger_dose > 0, 1, 0)
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    hCG_trigger_used, GnRH_trigger_used,
+    .after = Progesterone_total_dose
+  )
+
+
+write_csv(
+  freshdata,
+  here("data", "processed", "freshdata_cleaned_new.csv")
+)
+```
+
+## Outcome distribution
+```{r}
+ggplot(freshdata, aes(x = No_mature_eggs)) +
+  geom_histogram(binwidth = 2, fill = "light blue", colour = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Mature Oocytes",
+       x = "Number of Mature Oocytes",
+       y = "Count")
+
+
+ggplot(freshdata, aes(x = Total_stim_dose)) +
+  geom_histogram(binwidth = 200, fill = "steelblue", colour = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Total Stimulation Dose",
+       x = "Total Stim Dose (iu)",
+       y = "Count")
+```
+
+```{r}
+summary(freshdata$No_mature_eggs)
+
+sd(freshdata$No_mature_eggs, na.rm = TRUE) #8.1419
+var(freshdata$No_mature_eggs, na.rm = TRUE) #66.29054
+mean(freshdata$No_mature_eggs, na.rm = TRUE) #11.24359
+```
+
+## Distributions
+```{r}
+plot_histograms <- function(df, bins = 20, exclude_binary = TRUE) {
+  library(ggplot2)
+  library(dplyr)
+  #Select numeric columns
+  #num_df <- df %>% select(where(is.numeric))
+  #Loop through columns
+  for (col in names(df)) {
+    clean_label <- col %>%
+      str_replace_all("_", " ") %>%
+      str_to_sentence()
+    p <- ggplot(df, aes(x = .data[[col]])) +
+      geom_histogram(bins = bins, fill = "steelblue", color = "black") +
+      labs(
+        title = paste("Distribution of", col),
+        x = col,
+        y = "Count"
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.title = element_text(face = "bold"),
+        axis.text = element_text(color = "black"),
+        axis.title = element_text(color = "black")
+      )
+    print(p)
+  }
+}
+
+plot_histograms(num_vars)
+```
+
+## Missingness
+```{r}
+#Table: percentage missing per variable, sorted descending
+miss_table <- freshdata %>%
+  summarise(across(everything(), ~ mean(is.na(.)) * 100)) %>%
+  pivot_longer(everything(), names_to = "Parameter", values_to = "Pct_missing") %>%
+  arrange(desc(Pct_missing)) %>%
+  filter(Pct_missing > 0)
+ 
+print(miss_table, n = 50)
+```
+
+```{r}
+ggplot(miss_table, aes(x = reorder(Parameter, Pct_missing), y = Pct_missing)) +
+  geom_col(fill = "light blue") +
+  coord_flip() +
+  labs(title = "Percentage missing per variable",
+       x = NULL, y = "% missing") +
+  theme_minimal()
+```
+```{r, fig.width=12, fig.height=7}
+freshdata |>
+  select(where(~ any(is.na(.)))) |>
+  vis_miss(sort_miss = TRUE, cluster = TRUE) +
+  labs(
+    title = "Missingness Heatmap",
+    subtitle = "Variables sorted by missingness, rows clustered by pattern of missingness",
+    x = "Parameters",
+    y = "Observations"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 80, hjust = 1, size = 10),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10, colour = "Black"),
+    legend.position = "bottom"
+  )
+```
+## Correlation
+```{r}
+num_vars <- freshdata %>% 
+  select(
+    Age, 
+    BMI,
+    Baseline_AMH,
+    Baseline_total_follicles,
+    Baseline_left_follicles,
+    Baseline_right_follicles,
+    Baseline_endometrium,
+    GnRH_antagonist_start_day,
+    GnRH_antagonist_end_day,
+    GnRH_antagonist_duration,
+    GnRH_antagonist_total_dose,
+    FSH_total_dose,
+    FSH_duration,
+    FSH_initial_dose,
+    FSH_final_dose,
+    FSH_max_dose,
+    FSH_min_dose,
+    FSH_dose_changes,
+    FSH_change_day_1,
+    FSH_change_day_2,
+    #FSH_change_day_3,
+    FSH_dose_delta,
+    FSH_avg_daily,
+    hMG_total_dose,
+    hMG_duration,
+    hMG_initial_dose,
+    hMG_final_dose,
+    hMG_max_dose,
+    hMG_min_dose,
+    hMG_dose_changes,
+    hMG_change_day_1, 
+    #hMG_change_day_2,
+    #hMG_change_day_3,
+    hMG_dose_delta,
+    hMG_avg_daily,
+    hCG_trigger_dose,
+    GnRH_agonist_trigger_dose,
+    Last_day_of_stim,
+    Final_total_follicles,
+    Final_left_follicles,
+    Final_right_follicles,
+    Final_follicles_lessthan_11.9,
+    Final_endometrium_ec,
+    Day_of_ec,
+    Pre_wash_sperm_conc,
+    Pre_wash_sperm_motility,
+    Pre_wash_normal_sperm_morphology,
+    Post_wash_sperm_conc,
+    Post_wash_sperm_motility,
+    Semen_vol,
+    No_eggs,
+    No_mature_eggs,
+    No_fertilised,
+    Fertilisation_rate
+  )
+```
+
+## Bin age ranges
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Age_group = case_when(
+      Age < 30 ~ "<30",
+      Age >= 30 & Age < 35 ~ "30–34",
+      Age >= 35 & Age < 38 ~ "35–37",
+      Age >= 38 & Age < 40 ~ "38–39",
+      Age >= 40 ~ "40+"
+    )
+  )
+```
+
+```{r, fig.width=13, fig.height=8}
+cor_matrix1 <- cor(num_vars, method = "spearman", use = "pairwise.complete.obs")
+corrplot(cor_matrix1,
+         method = "color",
+         type = "upper",
+         #order = "hclust",
+         tl.col = "black",
+         tl.cex = 0.6,
+         col = colorRampPalette(c("blue", "white", "red"))(200))
+```
+
+```{r, fig.width=12, fig.height=7}
+res1 <- rcorr(as.matrix(num_vars), type = "spearman")
+
+corrplot(res1$r,
+         method = "color",
+         type = "upper",
+         tl.col = "black",
+         tl.cex = 0.6,
+         col = colorRampPalette(c("blue", "white", "red"))(200),
+         p.mat = res1$P,
+         sig.level = 0.05,
+         insig = "blank")
+```
+
+```{r}
+cor_mat1 <- res1$r
+p_mat1 <- res1$P
+
+#tidy up 
+cor_df1 <- as.data.frame(as.table(cor_mat1)) %>%
+  rename(Var1 = Var1, Var2 = Var2, Correlation = Freq) %>%
+  mutate(p_value = as.vector(p_mat1)) %>%
+  filter(Var1 != Var2)
+
+#remove duplicates
+cor_df1 <- cor_df1 %>%
+  rowwise() %>%
+  mutate(pair = paste(sort(c(Var1, Var2)), collapse = "_")) %>%
+  ungroup() %>%
+  distinct(pair, .keep_all = TRUE)
+```
+
+## T1: most sig correlations by p-value
+```{r}
+top_p1 <- cor_df1 %>%
+  arrange(p_value) %>%
+  slice(1:10)
+```
+
+## T2: strongest correlations by maginitude of r
+```{r}
+top_r1 <- cor_df1 %>%
+  arrange(desc(abs(Correlation))) %>%
+  slice(1:10)
+```
+
+## T3: top sig
+```{r}
+top_r_sig1 <- cor_df1 %>%
+  filter(p_value < 0.05) %>%
+  arrange(desc(abs(Correlation))) %>%
+  slice(1:10)
+```
+
+## Correlations with number of mature oocytes
+```{r}
+cor_with_outcome1 <- data.frame(
+  Variable = colnames(res1$r),
+  Correlation = res1$r["No_mature_eggs", ],
+  p_value = res1$P["No_mature_eggs", ]
+)
+
+cor_with_outcome1 <- cor_with_outcome1 %>%
+  filter(Variable != "No_mature_eggs")
+
+cor_with_outcome1 %>%
+  arrange(desc(abs(Correlation)))
+```
+```{r}
+cor_with_outcome1 %>%
+  arrange(p_value)
+```
+
+## smaller correlation matrices
+```{r}
+baseline_vars <- c(
+    "Age", 
+    "BMI",
+    "Baseline_AMH",
+    "Baseline_total_follicles",
+    "Baseline_left_follicles",
+    "Baseline_right_follicles",
+    "Baseline_endometrium",
+    "No_mature_eggs",
+    "No_fertilised",
+    "Fertilisation_rate"
+    )
+
+baseline_df <- freshdata %>%
+  select(all_of(baseline_vars))
+
+protocol_vars <- c(
+  "GnRH_antagonist_start_day",
+  "GnRH_antagonist_end_day",
+  "GnRH_antagonist_duration",
+  "GnRH_antagonist_total_dose",
+  "FSH_total_dose",
+  "FSH_duration",
+  "FSH_initial_dose",
+  "FSH_final_dose",
+  "FSH_max_dose",
+  "FSH_min_dose",
+  "FSH_dose_changes",
+  "FSH_change_day_1",
+  "FSH_change_day_2",
+    #FSH_change_day_3,
+  "FSH_dose_delta",
+  "FSH_avg_daily",
+  "hMG_total_dose",
+  "hMG_duration",
+  "hMG_initial_dose",
+  "hMG_final_dose",
+  "hMG_max_dose",
+  "hMG_min_dose",
+  "hMG_dose_changes",
+  "hMG_change_day_1", 
+    #hMG_change_day_2,
+    #hMG_change_day_3,
+  "hMG_dose_delta",
+  "hMG_avg_daily",
+  "hCG_trigger_dose",
+  "GnRH_agonist_trigger_dose",
+  "Last_day_of_stim",
+  "No_mature_eggs"
+)
+
+protocol_df <- freshdata %>%
+  select(all_of(protocol_vars))
+
+male_vars <- c(
+  "Pre_wash_sperm_conc",
+  "Pre_wash_sperm_motility",
+  "Pre_wash_normal_sperm_morphology",
+  "Post_wash_sperm_conc",
+  "Post_wash_sperm_motility",
+  "Semen_vol",
+  "No_mature_eggs",
+  "No_fertilised",
+  "Fertilisation_rate"
+)
+
+male_df <- freshdata %>%
+  select(all_of(male_vars))
+```
+
+```{r}
+cor_matrix2 <- cor(baseline_df, method = "spearman", use = "pairwise.complete.obs")
+corrplot(cor_matrix2,
+         method = "color",
+         type = "upper",
+         #order = "hclust",
+         tl.col = "black",
+         tl.cex = 0.8,
+         col = colorRampPalette(c("blue", "white", "red"))(200))
+```
+```{r}
+res2 <- rcorr(as.matrix(baseline_df), type = "spearman")
+cor_with_outcome2 <- data.frame(
+  Variable = colnames(res2$r),
+  Correlation = res2$r["No_mature_eggs", ],
+  p_value = res2$P["No_mature_eggs", ]
+)
+
+cor_with_outcome2 <- cor_with_outcome2 %>%
+  mutate(abs_r = abs(Correlation)) %>%
+  arrange(desc(abs_r))
+
+cor_with_outcome2 %>%
+  select(Variable, Correlation, p_value)
+```
+
+```{r, fig.width=12, fig.height=8}
+cor_matrix3 <- cor(protocol_df, method = "spearman", use = "pairwise.complete.obs")
+corrplot(cor_matrix3,
+         method = "color",
+         type = "upper",
+         #order = "hclust",
+         tl.col = "black",
+         tl.cex = 0.7,
+         col = colorRampPalette(c("blue", "white", "red"))(200))
+```
+
+```{r}
+cor_matrix4 <- cor(male_df, method = "spearman", use = "pairwise.complete.obs")
+corrplot(cor_matrix4,
+         method = "color",
+         type = "upper",
+         #order = "hclust",
+         tl.col = "black",
+         tl.cex = 0.8,
+         col = colorRampPalette(c("blue", "white", "red"))(200))
+```
+
+
+```{r}
+ggplot(freshdata, aes(x = Age, y = No_mature_eggs)) +
+  
+  geom_point(alpha = 1, size = 1.5, colour = "#1F78B4") +
+  #geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between Age and Number of Mature Oocytes",
+    x = "Age (years)",
+    y = "Number of Mature Oocytes"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.4),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Baseline_AMH, y = No_mature_eggs)) +
+  geom_point(alpha = 1, size = 2, colour = "#1F78B4") +
+  #geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between AMH Levels and Number of Mature Oocytes",
+    x = "AMH (Anti Mullerian Hormone) Levels",
+    y = "Number of Mature Oocytes"
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r, fig.width=10, fig.height=6}
+ggplot(freshdata, aes(x = Baseline_total_follicles, y = No_mature_eggs)) +
+  
+  geom_point(alpha = 1, size = 2, colour = "#1F78B4") +
+  # Add trend line (very important)
+  geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between Baseline Total Follicles (prior to first IVF cycle) and Number of Mature Oocytes",
+    x = "Age (years)",
+    y = "Number of Total Baseline Follicles"
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Age, y = Baseline_AMH)) +
+  geom_point(alpha = 1, size = 2, colour = "#1F78B4") +
+  #geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between Age and AMH Levels",
+    x = "Age",
+    y = "AMH Levels"
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Age, y = No_mature_eggs, colour = Protocol_type)) +
+  geom_point(alpha = 0.9, size = 2) +
+    scale_colour_manual(values = c(
+    "#D55E00", "#56B4E9", "#CC79B9", "#F0E442"
+    )) +
+  #geom_smooth(method = "lm", se = FALSE) +
+  #scale_colour_brewer(palette = "Dark2") +
+  labs(
+    title = "Age vs Mature Oocytes by Protocol Type",
+    x = "Age",
+    y = "Number of Mature Oocytes",
+    colour = "Protocol"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black")
+  )
+```
+
+
+```{r}
+ggplot(freshdata, aes(x = Age, y = No_mature_eggs, colour = Aetiology_group)) +
+  geom_point(alpha = 0.9, size = 2) +
+  scale_colour_manual(values = c(
+    "#D55E00", "#56B4E9", "#CC79B9", "#F0E442"
+    #"#0072B2", "#D55E00", "#CC79A7", "#000000"
+  )) +
+  labs(
+    title = "Age vs Number of Mature Oocytes by Aetiology",
+    x = "Age (years)",
+    y = "Number of Mature Oocytes",
+    colour = "Aetiology"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    legend.title = element_text(face = "bold")
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = FSH_total_dose, y = No_mature_eggs, colour = Aetiology_group)) +
+  geom_point(alpha = 0.9, size = 2) +
+  scale_colour_manual(values = c(
+  "#D55E00", "#56B4E9", "#CC79B9", "#F0E442"
+  #"#0072B2", "#D55E00", "#CC79A7", "#000000"
+  )) +
+  #Trend lines per protocol
+  #geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Total FSH dose vs Number of Mature Oocytes by Aetiology",
+    x = "Total FSH dose (iu)",
+    y = "Number of Mature Oocytes",
+    colour = "Aetiology"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    legend.title = element_text(face = "bold")
+  )
+```
+```{r}
+ggplot(freshdata, aes(x = Total_stim_dose, y = No_mature_eggs, colour = Aetiology_group)) +
+  geom_point(alpha = 0.9, size = 2) +
+  scale_colour_manual(values = c(
+  "#D55E00", "#56B4E9", "#CC79B9", "#F0E442"
+  #"#0072B2", "#D55E00", "#CC79A7", "#000000"
+  )) +
+  #Trend lines per protocol
+  #geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Total Stimulation dose vs Number of Mature Oocytes by Aetiology",
+    x = "Total Stimulation dose (iu)",
+    y = "Number of Mature Oocytes",
+    colour = "Aetiology"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    legend.title = element_text(face = "bold")
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = FSH_total_dose, y = No_mature_eggs)) +
+  geom_point(alpha = 0.5, colour = "#1F78B4") +
+  #geom_smooth(method = "loess", se = FALSE, colour = "darkred") +
+  facet_wrap(~ Age_group) +
+  labs(
+    title = "FSH Dose vs Mature Oocytes Across Age Groups",
+    x = "Total FSH Dose",
+    y = "Number of Mature Oocytes"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    strip.text = element_text(face = "bold"),
+    axis.text = element_text(color = "black")
+  )
+
+
+ggplot(freshdata, aes(x = FSH_total_dose, y = No_mature_eggs, colour = Age_group)) +
+  
+  geom_point(alpha = 0.9, size = 2) +
+  
+  #geom_smooth(method = "lm", se = FALSE) +
+  
+  scale_colour_brewer(palette = "Dark2") +
+  
+  labs(
+    title = "FSH Dose vs Mature Oocytes by Age Group",
+    x = "Total FSH Dose",
+    y = "Number of Mature Oocytes",
+    colour = "Age Group"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black")
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = hMG_total_dose, y = No_mature_eggs, colour = Age_group)) +
+  
+  geom_point(alpha = 0.9, size = 2) +
+  
+  #geom_smooth(method = "lm", se = FALSE) +
+  
+  scale_colour_brewer(palette = "Dark2") +
+  
+  labs(
+    title = "hMG Dose vs Mature Oocytes by Age Group",
+    x = "Total hMG Dose (iu)",
+    y = "Number of Mature Oocytes",
+    colour = "Age Group"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black")
+  )
+```
+
+
+
+```{r}
+ggplot(freshdata, aes(x = Baseline_AMH, y = FSH_total_dose)) +
+  
+  geom_point(alpha = 1, size = 2, colour = "#1F78B4") +
+  #geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between AMH levels and FSH dose administered",
+    x = "Baseline AMH levels",
+    y = "Total FSH dose (iu)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Baseline_AMH, y = hMG_total_dose)) +
+  geom_point(alpha = 1, size = 2, colour = "#1F78B4") +
+  #geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between AMH levels and hMG dose administered",
+    x = "Baseline AMH levels",
+    y = "Total hMG dose (iu)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Age, y = FSH_total_dose)) +
+  
+  geom_point(alpha = 1, size = 2, colour = "#1F78B4") +
+  #geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between Age and FSH dose administered",
+    x = "Age (years)",
+    y = "Total FSH dose (iu)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Age, y = hMG_total_dose)) +
+  
+  geom_point(alpha = 1, size = 2, colour = "#1F78B4") +
+  #geom_smooth(method = "lm", se = FALSE, colour = "red") +
+  labs(
+    title = "Relationship Between Age and Total hMG dose administered",
+    x = "Age (years)",
+    y = "Total FSH dose (iu)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Protocol_type, y = No_mature_eggs)) +
+  geom_boxplot(fill = "#A6CEE3", colour = "black", outlier.alpha = 0.5) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 1.5) +
+  labs(
+    title = "Number of Mature Oocytes by Protocol Type",
+    x = "Protocol Type",
+    y = "Number of Mature Oocytes"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+ggplot(freshdata, aes(x = Aetiology, y = No_mature_eggs)) +
+  geom_boxplot(fill = "#A6CEE3", colour = "black", outlier.alpha = 0.5) +
+  # Add jittered points (VERY useful for your dataset size)
+  geom_jitter(width = 0.2, alpha = 0.4, size = 1.5) +
+  labs(
+    title = "Number of Mature Oocytes by Protocol Type",
+    x = "Protocol Type",
+    y = "Number of Mature Oocytes"
+  ) +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(color = "black"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+### MODEL
+```{r}
+library(MASS)
+
+model1 <- glm.nb(
+  No_mature_eggs ~ Age + FSH_total_dose + hMG_total_dose +
+    Baseline_AMH + BMI,
+  data = freshdata
+)
+
+summary(model1)
+exp(coef(model1))
+```
+
+
+```{r}
+model2 <- glm.nb(No_mature_eggs ~ Baseline_AMH * FSH_total_dose + Age, data = freshdata)
+summary(model2)
+```
+```{r}
+model3 <- glm.nb(No_mature_eggs ~ Age * FSH_total_dose + Baseline_AMH, data = freshdata)
+summary(model3)
+```
+
+##Model dosing
+```{r}
+model4 <- glm.nb(FSH_avg_daily ~ Baseline_AMH + Age, data = freshdata)
+summary(model4)
+```
+## Model dose strategy not just dose
+
+```{r}
+model5 <- glm.nb(
+  No_mature_eggs ~ Baseline_AMH + BMI + FSH_avg_daily + FSH_dose_changes + hMG_total_dose + hMG_duration,
+  data = freshdata
+)
+summary(model5)
+```
+## Model testing whether age affects AMH levels
+
+```{r}
+lm1 <- lm(log(Baseline_AMH) ~ Age, data = freshdata)
+summary(lm1)
+```
+```{r}
+plot(lm1, which = 2)
+plot(lm1, which = 3)
+plot(lm1, which = 4)  # Cook’s distance
+```
+
+```{r}
+freshdata$Aetiology_group <- factor(freshdata$Aetiology_group)
+
+lm2 <- lm(log(Baseline_AMH) ~ Age * Aetiology_group, data = freshdata)
+
+plot(lm2, which = 2)
+plot(lm2, which = 3)
+plot(lm2, which = 4)
+
+summary(lm2)
+```
+
+```{r}
+ggplot(freshdata, aes(Age, log(Baseline_AMH + 1), colour = Aetiology_group)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Age",
+    y = "log(AMH + 1)",
+    colour = "Aetiology"
+  ) +
+  theme_minimal()
+
+freshdata <- freshdata %>%
+  filter(!is.na(Aetiology_group))
+
+ggplot(freshdata, aes(Age, log(Baseline_AMH), colour = Aetiology_group)) +
+  geom_point(alpha = 0.75, size = 1.5) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1) +
+  scale_colour_brewer(palette = "Set1") +
+  labs(
+    title = "Effect of Age on AMH Across Aetiology Groups",
+    x = "Age (years)",
+    y = "log(AMH)",
+    colour = "Aetiology group"
+  ) +
+  theme_classic(base_size = 14)
+```
+
+```{r}
+library(MASS)
+nb1 <- glm.nb(No_mature_eggs ~ Age * Aetiology_group, data = freshdata)
+summary(nb1)
+exp(coef(nb1))
+exp(confint(nb1))
+```
+
+```{r}
+nb2 <- glm.nb(No_mature_eggs ~ Age + log(Baseline_AMH) + Aetiology_group, data = freshdata)
+summary(nb2)
+plot(nb2)
+```
+
+```{r}
+nb3 <- glm.nb(No_mature_eggs ~ log(Baseline_AMH) + Age * Aetiology_group, data = freshdata)
+summary(nb3)
+```
+
+```{r}
+nb4 <- glm.nb(No_mature_eggs ~ Age + log(Baseline_AMH) + Aetiology_group + FSH_avg_daily + hMG_avg_daily + GnRH_antagonist_duration, data = freshdata)
+summary(nb4)
+```
+
+## Modelling Dose
+
+
+```{r}
+lm3 <- lm(FSH_total_dose ~ Baseline_AMH + Age + Aetiology_group, data = freshdata)
+summary(lm3)
+
+plot(lm3)
+```
+
+```{r}
+lm4 <- lm(FSH_avg_daily ~ Age, data = freshdata)
+summary(lm4)
+```
+```{r}
+freshdata$Treatment_type <- factor(freshdata$Treatment_type)
+
+nb5 <- glm.nb(No_mature_eggs ~ Total_stim_dose + Treatment_type + Age, data = freshdata)
+summary(nb5)
+```
+
+```{r}
+lm5 <- lm(log(Total_stim_dose) ~ Age * Aetiology_group + Treatment_type, data = freshdata)
+summary(lm5)
+plot(lm5)
+
+
+hist(log(freshdata$Total_stim_dose))
+```
+
+```{r}
+nb6 <- glm.nb(No_mature_eggs ~ Baseline_AMH * Total_stim_dose + Age + Aetiology_group, data = freshdata)
+summary(nb6)
+##higher dose does not mean more eggs
+```
+
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    AMH_group = cut(
+      Baseline_AMH,
+      breaks = quantile(Baseline_AMH, probs = c(0, 0.33, 0.66, 1), na.rm = TRUE),
+      labels = c("Low AMH", "Medium AMH", "High AMH"),
+      include.lowest = TRUE
+    )
+  )
+
+ggplot(freshdata, aes(Total_stim_dose, No_mature_eggs, colour = AMH_group)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1.2) +
+  scale_colour_brewer(palette = "Set1") +
+  labs(
+    title = "Effect of Stimulation Dose on Mature Oocytes by AMH Level",
+    x = "Total Stimulation Dose (IU)",
+    y = "Number of Mature Oocytes",
+    colour = "AMH group"
+  ) +
+  theme_classic(base_size = 14)
+```
+
+
+
+
