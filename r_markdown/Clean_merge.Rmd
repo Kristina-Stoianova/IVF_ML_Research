@@ -1,0 +1,423 @@
+---
+title: "Cleaning + Merging with new data"
+output: html_document
+date: "2026-03-23"
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+#Load required packages
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(janitor)
+
+library(here)
+here::here()
+
+#Load functions scripts needed for this pipeline
+source(here("scripts", "cleaning_helpers.R"))
+source(here("scripts", "cleaning_functions_parsers.R"))
+```
+
+```{r setup, message=FALSE, warning=FALSE}
+update_data <- read_csv(
+  here("data","raw","Final_Fresh_Merged.csv"),
+  name_repair = "minimal"
+)
+
+update_data1 <- read_csv(
+  here("data","raw","Missing_Fresh_Data.csv"),
+  name_repair = "minimal"
+)
+
+smalldata <- read_csv(
+  here("data", "processed", "freshdata_cleaned1.csv"),
+  name_repair = "minimal"
+)
+```
+
+## Standardise missing values
+```{r}
+update_data <- standardise_missing_values(update_data)
+update_data1 <- standardise_missing_values(update_data1)
+
+#freshdata <- standardise_missing_values(freshdata)
+```
+
+## MERGE
+```{r}
+##difference in data structure of this parameter so will fail to merge
+str(update_data$FRZ_D7_EevaScores)
+str(update_data1$FRZ_D7_EevaScores)
+
+#ensure both are numeric
+update_data1 <- update_data1 %>%
+  mutate(
+    FRZ_D7_EevaScores = trimws(FRZ_D7_EevaScores),
+    FRZ_D7_EevaScores = na_if(FRZ_D7_EevaScores, ""),
+    FRZ_D7_EevaScores = as.numeric(FRZ_D7_EevaScores)
+  )
+
+#Merge 
+data <- bind_rows(update_data, update_data1)
+```
+
+```{r}
+data <- data %>%
+  clean_names() %>%
+  rename_with(~ str_to_title(.))
+```
+
+## Renaming parameters of interest  
+```{r}
+data <- data %>%
+  rename(
+    Unique_number = Unique_nbr,
+    Funding = Patient_class,
+    Age = Patient_age_at_td1,
+    BMI = Bmi,
+    Aetiology = Causeof_infertility,
+    Protocol_type = Protocol,
+    Final_total_follicles = Total_fol_on_last_scan,
+    Final_follicles_lessthan_11.9 = Total_fol_11_9mm_on_last_scan,
+    Baseline_AMH = Anti_mullerian_hormone_result,
+    Pre_wash_sperm_motility = Initial_motile,
+    Pre_wash_sperm_conc = Initial_con,
+    Post_wash_sperm_conc = Post_con,
+    Post_wash_sperm_motility = Post_motile,
+    Semen_vol = Volume,
+    Sperm_prep = Spz_prep,
+    Treatment = Art_method,
+    Fertilisation_rate = Fert_rate,
+    No_eggs = Nbr_retrieved,
+    No_inseminated = Nbr_inseminated,
+    No_mature_eggs = Nbr_miid0,
+    No_mature_eggs_16hr = Nbr_mii16hr,
+    No_fertilised_eggs = Nbr_2pn
+  )
+
+#filter by cycle start date --> check that they are dates
+#infertility_duration, cycle start date, total FSH dose, total hMG dose, trigger med, total trigger dose, fert method, 
+```
+
+# Extract parameters of interest
+```{r}
+parameters <- c(
+    "Unique_number",
+    "Funding",
+    "Age",
+    "BMI",
+    "Infertility_duration",
+    "Aetiology",
+    "Cycle_start_date",
+    "Protocol_type",
+    "Total_fsh_dose",
+    "Totalh_mg_dose",
+    "Trigger_med",
+    "Total_trigger_dose",
+    "Final_total_follicles",
+    "Final_follicles_lessthan_11.9",
+    "Natural_follicle_info",
+    "Baseline_AMH",
+    "Treatment",
+    "Pre_wash_sperm_conc",
+    "Pre_wash_sperm_conc",
+    "Post_wash_sperm_motility",
+    "Post_wash_sperm_conc",
+    "Semen_vol",
+    "Sperm_prep",
+    "Pelvic_date",
+    "No_eggs",
+    "No_inseminated",
+    "No_mature_eggs",
+    "No_mature_eggs_16hr",
+    "No_fertilised_eggs",
+    "Fertilisation_rate"
+  )
+
+freshdata <- data %>%
+  dplyr::select(
+    all_of(parameters),
+    72:107 #follicle size counts too --> to derive baseline total follicle count, potentially
+    )
+```
+
+## Funding
+```{r}
+print(unique(freshdata$Funding))
+
+freshdata <- freshdata %>%
+  mutate(Funding = clean_funding(Funding))
+```
+
+## Age and BMI
+```{r}
+str(freshdata$Age)
+str(freshdata$BMI)
+str(freshdata$Infertility_duration)
+```
+
+## Derive PGD
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    ##Derive PGD column
+    PGD = if_else(
+      str_detect(Aetiology, regex("\\bPGD\\b", ignore_case = TRUE)),
+      "Y",
+      "N"
+    ),
+    .after = Aetiology
+  )
+```
+
+## Derive Male Factor
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    ##Derive Male factor column
+    Male_factor = if_else(
+      !is.na(Aetiology) & str_detect(Aetiology, regex("\\bMale Factor\\b", ignore_case = TRUE)),
+      "Y",
+      "N"
+    ),
+    .after = Aetiology
+  )
+```
+
+## Aetiology
+```{r}
+print(unique(freshdata$Aetiology))
+```
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Aetiology = clean_aetiology1(Aetiology)
+  )
+
+print(unique(freshdata$Aetiology))
+```
+## Protocol
+
+```{r}
+print(unique(freshdata$Protocol_type))
+
+freshdata <- freshdata %>%
+  mutate(
+    protocol_lower = stringr::str_to_lower(stringr::str_squish(Protocol_type)),
+    #Cleaning function
+    protocol_type_clean = clean_protocol_type(protocol_lower),
+    
+    ##if the drug is mentioned in the protocol use 1
+    FSH_used = ifelse(
+      stringr::str_detect(protocol_lower, "fsh|rfsh") |
+      (!is.na(Total_fsh_dose) & Total_fsh_dose > 0),
+      1, 0
+    ),
+    
+    hMG_used = ifelse(
+      stringr::str_detect(protocol_lower, "hmg") |
+      (!is.na(Totalh_mg_dose) & Totalh_mg_dose > 0),
+      1, 0
+    ),
+    
+    FSH_starting_dose = extract_fsh_dose(protocol_lower),
+    hMG_starting_dose = extract_hmg_dose(protocol_lower),
+    
+    .after = Protocol_type
+  ) %>%
+  select(-protocol_lower)
+
+##Fixing 0s and NAs
+freshdata <- freshdata %>%
+  mutate(
+    #FSH starting dose
+    FSH_starting_dose = case_when(
+      FSH_used == 0 ~ 0,
+      FSH_used == 1 & !is.na(FSH_starting_dose) ~ FSH_starting_dose,
+      FSH_used == 1 & is.na(FSH_starting_dose) ~ NA_real_
+    ),
+    #hMG starting dose
+    hMG_starting_dose = case_when(
+      hMG_used == 0 ~ 0,
+      hMG_used == 1 & !is.na(hMG_starting_dose) ~ hMG_starting_dose,
+      hMG_used == 1 & is.na(hMG_starting_dose) ~ NA_real_
+    )
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Total_fsh_dose = case_when(
+      FSH_used == 0 ~ 0,
+      FSH_used == 1 & !is.na(Total_fsh_dose) ~ Total_fsh_dose,
+      FSH_used == 1 & is.na(Total_fsh_dose) ~ NA_real_
+    ),
+    
+    Totalh_mg_dose = case_when(
+      hMG_used == 0 ~ 0,
+      hMG_used == 1 & !is.na(Totalh_mg_dose) ~ Totalh_mg_dose,
+      hMG_used == 1 & is.na(Totalh_mg_dose) ~ NA_real_
+    )
+  )
+```
+
+## Trigger
+```{r}
+print(unique(freshdata$Trigger_med))
+```
+
+## Derive baseline total follicles from follicle size counts
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Baseline_total_follicles = ifelse(
+      rowSums(!is.na(select(., starts_with("Follic_cnt")))) == 0,
+      NA,
+      rowSums(select(., starts_with("Follic_cnt")), na.rm = TRUE)
+    )
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Baseline_total_follicles,
+    .after = Natural_follicle_info
+  )
+```
+
+```{r}
+freshdata %>%
+  filter(
+    !is.na(No_mature_eggs) &
+    !is.na(No_inseminated) &
+    No_mature_eggs != No_inseminated
+  )
+
+print(sum(freshdata$No_inseminated == 0)) #101
+print(sum(freshdata$No_mature_eggs == 0)) #159
+```
+
+## first cycle
+```{r}
+firstcycle <- freshdata %>%
+  mutate(
+    Cycle_start_date = as.Date(Cycle_start_date)
+  ) %>%
+  arrange(Unique_number, Cycle_start_date) %>%
+  group_by(Unique_number) %>%
+  slice_min(order_by = Cycle_start_date, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+print(sum(firstcycle$No_inseminated == 0)) #62 missing
+print(sum(firstcycle$No_mature_eggs == 0)) #96 missing 
+
+firstcycle %>%
+  filter(
+    !is.na(No_mature_eggs) &
+    !is.na(No_inseminated) &
+    No_mature_eggs != No_inseminated
+  )
+
+firstcycle <- firstcycle %>%
+  filter(No_inseminated != 0)
+```
+
+```{r}
+print(sum(is.na(firstcycle$Baseline_AMH))) #266
+firstcycle <- firstcycle %>%
+  filter(Baseline_AMH != 0)
+
+first
+```
+
+```{r}
+firstcycle <- firstcycle %>%
+  left_join(
+    smalldata %>% select(Unique_number, Baseline_total_follicles),
+    by = "Unique_number"
+  )
+
+firstcycle <- firstcycle %>%
+  relocate(
+    Baseline_total_follicles.y,
+    .after = Natural_follicle_info
+  )
+```
+
+```{r}
+edaparams <- c(
+  "Age",
+  "BMI",
+  "Aetiology",
+  "protocol_type_clean",
+  "FSH_used",
+  "hMG_used",
+  "FSH_starting_dose",
+  "hMG_starting_dose",
+  "Total_fsh_dose",
+  "Totalh_mg_dose",
+  "Trigger_med",
+  "Total_trigger_dose",
+  "Final_follicles_lessthan_11.9",
+  "Baseline_AMH",
+  "Natural_follicle_info",
+  "Baseline_total_follicles.y",
+  "No_eggs",
+  "No_inseminated"
+)
+
+firstcycledata <- firstcycle %>%
+  all_of(select(edaparams))
+```
+
+```{r}
+cor.test(firstcycledata$Total_fsh_dose, firstcycledata$No_inseminated, method = "pearson")
+```
+```{r}
+cor.test(firstcycledata$Age, firstcycledata$No_inseminated, method = "pearson")
+```
+```{r}
+cor.test(firstcycledata$Age, firstcycledata$Total_fsh_dose, method = "pearson")
+```
+
+```{r}
+write_csv(
+  firstcycledata,
+  here("data", "processed", "freshdata_ext.csv")
+)
+```
+
+## Just getting first cycle data for the patients to fill in the correct total follicle size: preparing for quick clustering for meeting
+```{r}
+sum(is.na(firstcycle$Baseline_total_follicles)) #360 missing/471
+
+firstcycle %>%
+  count(Unique_number) %>%
+  filter(n > 1) #0 all numbers are unique = 471 patients
+
+
+sum(firstcycle$Unique_number %in% smalldata$Unique_number)
+
+firstcycle_updated <- firstcycle %>%
+  left_join(
+    smalldata %>% 
+      dplyr::select(Unique_number, Baseline_total_follicles),
+    by = "Unique_number",
+    suffix = c("", "_new")
+  ) %>%
+  mutate(
+    Baseline_total_follicles = dplyr::coalesce(
+      Baseline_total_follicles,
+      Baseline_total_follicles_new
+    )
+  ) %>%
+  dplyr::select(-Baseline_total_follicles_new)
+
+sum(is.na(firstcycle$Baseline_total_follicles)) #360 missing
+sum(is.na(firstcycle$Baseline_AMH)) #314 missing 
+
+sum(is.na(total_data$Baseline_total_follicles)) #607 missing
+sum(is.na(firstcycle$Baseline_AMH))
+sum(is.na(total_data$Baseline_AMH))
+
+```
