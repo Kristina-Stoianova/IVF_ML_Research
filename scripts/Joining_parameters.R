@@ -65,6 +65,20 @@ df <- df %>%
     .after = Final_right_follicles
   )
 
+## Derive final follicles > 11.9
+
+#df <- df %>%
+ # mutate(
+  #  Final_follicles_gt11.9 = Final_total_follicles - Final_follicles_lessthan_11.9
+ # )
+
+#df <- df %>%
+ # relocate(
+   # Final_follicles_gt11.9,
+   # .after = Final_follicles_lessthan_11.9
+#  )
+
+
 df$Baseline_AMH <- NULL
 colnames(df)[colnames(df) == "AMH"] <- "Baseline_AMH"
 
