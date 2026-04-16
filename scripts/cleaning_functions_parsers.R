@@ -1,41 +1,84 @@
 #Cleaning Aetiology
 clean_aetiology <- function(x) {
-  male_terms <- c(
-    "Azoospermia","Male Factor","Male Factor Other",
-    "Oligozoospermia","Sperm Donor","OAT","Teratoma","terato"
+  na_idx <- is.na(x)
+  x <- str_squish(x)
+  x <- str_to_lower(x)
+  #Fix typos
+  x <- str_replace_all(x, "relatonship", "relationship")
+  x <- str_replace_all(x, "researve", "reserve")
+  # Normalise separators to +
+  x <- str_replace_all(x, ",|;|\\band\\b|/", "+")
+  # Simple substitutions
+  x <- str_remove_all(x, regex("fertility preservation\\s*", ignore_case = TRUE))
+  x <- str_remove_all(x, "[()]")
+  x <- str_replace_all(x, "diminished ovarian reserve|low ovarian reserve", "DOR")
+  x <- str_remove_all(x, regex("ovulation disord\\w*\\s*\\+?\\s*", ignore_case = TRUE))
+  x <- str_replace_all(x, "pcos?", "PCO")
+  #Remove male terms and PGD entirely
+  male_and_pgd <- paste(
+    c("male factor other", "male factor", "azoospermia", "oligozoospermia",
+      "oat", "teratoma", "terato", "sperm donor", "pgd"),
+    collapse = "|"
   )
-  male_pattern <- paste(male_terms, collapse = "|")
-  typos <- c(
-    "Same Sex Relatonship" = "Same Sex Relationship",
-    "Researve" = "Reserve"
-    )
-  dor_terms <- c(
-    "Fertility Preservation low ovarian reserve + endometriosis" = "DOR + Endometriosis",
-    "Fertility Preservation low ovarian reserve" = "DOR",
-    "Diminished Ovarian Reserve" = "DOR",
-    "Low Ovarian Reserve" = "DOR"
+  x <- str_remove_all(x, regex(male_and_pgd, ignore_case = TRUE))
+  #Remove empty brackets and stray punctuation
+  x <- str_remove_all(x, "\\(\\s*\\)")
+  #Clean up leftover + separators
+  x <- str_replace_all(x, "(\\s*\\+\\s*)+", "+")   # collapse multiples
+  x <- str_remove_all(x, "^\\+|\\+$")              # trim leading/trailing
+  x <- str_replace_all(x, "\\+", " + ")            # standardise spacing
+  x <- str_squish(x)
+  # Empty = was male-only
+  x[x == ""] <- "No Female Factor"
+  # Title case, then restore acronyms
+  x <- str_to_title(x)
+  x <- str_replace_all(x, "\\bDor\\b", "DOR")
+  x <- str_replace_all(x, "\\bPco\\b", "PCO")
+  x[na_idx] <- NA
+  return(x)
+}
+
+parse_protocol <- function(protocol, total_fsh, total_hmg) {
+  x <- stringr::str_to_lower(stringr::str_squish(protocol))
+  #Protocol type
+  protocol_clean <- dplyr::case_when(
+    stringr::str_detect(x, "egg donor|donor") ~ "Egg_donor",
+    stringr::str_detect(x, "fertility preservation") ~ "Fertility_preservation",
+    stringr::str_detect(x, "long agonist") ~ "Long_agonist",
+    stringr::str_detect(x, "short antagonist") ~ "Short_antagonist",
+    stringr::str_detect(x, "short") ~ "Short_antagonist",
+    TRUE ~ "Other"
   )
   
-  x %>%
-    clean_categorical() %>%
-    str_replace_all(typos) %>%
-    #standardize ovulation disorder to PCO
-    str_replace_all(regex("Ovulation Disorder[s]?", ignore_case = TRUE), "PCO") %>%
-    #standardize DOR terms
-    str_replace_all(dor_terms) %>%
-    #remove duplicate PCO combinations
-    str_replace_all("\\bPCO \\+ PCO\\b", "PCO") %>%
-    #remove PGD
-    str_remove_all(regex("\\bPGD\\b", ignore_case = TRUE)) %>%
-    #remove male factor
-    str_remove_all(regex(male_pattern, ignore_case = TRUE)) %>%
-    #capitalize after "+"
-    str_replace_all("\\+\\s*([a-z])", ~ paste0("+ ", toupper(.x))) %>%
-    #clean again
-    clean_categorical() %>%
-    #replace empty
-    (\(x) ifelse(x == "" | is.na(x), "No Female Factor", x))()
+  #Drug used parameters
+  fsh_used <- ifelse(
+    stringr::str_detect(x, "fsh|rfsh") |
+      (!is.na(total_fsh) & total_fsh > 0),
+    1, 0
+  )
+  hmg_used <- ifelse(
+    stringr::str_detect(x, "hmg") |
+      (!is.na(total_hmg) & total_hmg > 0),
+    1, 0
+  )
+  #Starting dose
+  fsh_dose <- as.numeric(
+    stringr::str_extract(x, "(?<=rfsh\\s)\\d+|(?<=fsh\\s)\\d+")
+  )
+  
+  hmg_dose <- as.numeric(
+    stringr::str_extract(x, "(?<=hmg\\s)\\d+")
+  )
+  
+  tibble::tibble(
+    Protocol_clean = protocol_clean,
+    FSH_used = fsh_used,
+    hMG_used = hmg_used,
+    FSH_starting_dose = fsh_dose,
+    hMG_starting_dose = hmg_dose
+  )
 }
+
 
 #Stimulation cleaning function: applied to FSH, Hmg, Fyramedel
 clean_stim_string <- function(x) {
@@ -78,6 +121,7 @@ parse_stimulation <- function(x, prefix) {
       !!paste0(prefix, "_total_dose") := 0,
       !!paste0(prefix, "_duration") := 0,
       !!paste0(prefix, "_initial_dose") := NA,
+      !!paste0(prefix, "_start_day") := NA,
       !!paste0(prefix, "_final_dose") := NA,
       !!paste0(prefix, "_max_dose") := NA,
       !!paste0(prefix, "_min_dose") := NA,
@@ -140,6 +184,7 @@ parse_stimulation <- function(x, prefix) {
     !!paste0(prefix, "_total_dose") := total_dose,
     !!paste0(prefix, "_duration") := duration_total,
     !!paste0(prefix, "_initial_dose") := first(dose_data$dose),
+    !!paste0(prefix, "_start_day") := min(dose_data$day),
     !!paste0(prefix, "_final_dose") := last(dose_data$dose),
     !!paste0(prefix, "_max_dose") := max(dose_data$dose),
     !!paste0(prefix, "_min_dose") := min(dose_data$dose),
