@@ -5,7 +5,6 @@ date: "2026-03-12"
 ---
 
 ```{r setup, message=FALSE, warning=FALSE}
-
 #Load required packages
 library(tidyverse)
 library(dplyr)
@@ -170,6 +169,66 @@ freshdata %>%
 freshdata %>%
   filter(str_detect(Aetiology, "PGD"))
 ```
+## Male Factor
+```{r}
+unique(freshdata$Male_factor)
+
+freshdata <- freshdata %>%
+  mutate(
+    Male_factor = str_to_title(Male_factor)
+  )
+
+#QC
+unique(freshdata$Male_factor)
+```
+
+## Protocol Cleaning
+
+```{r}
+unique(freshdata$Protocol) ##contains lots of info
+
+freshdata <- freshdata %>%
+  mutate(
+    Protocol = Protocol %>%
+      str_squish() %>%
+      str_replace_all("(\\d+)\\s+iu", "\\1iu") %>%      # 225 iu to 225iu
+      str_replace("hMG\\+rRFSH", "hMG+rFSH") %>%        # typo fix
+      str_replace("Fertility preservation", "Fertility Preservation")
+  )
+
+##Derive 3 temp columns for clarity
+freshdata <- freshdata %>%
+  mutate(
+    ##1.Protocol type
+    Protocol_type = case_when(
+      str_detect(Protocol, "Long Agonist") ~ "Long Agonist",
+      str_detect(Protocol, "Short") ~ "Short Antagonist",
+      str_detect(Protocol, "Egg Donor") ~ "Egg Donor",
+      str_detect(Protocol, "Fertility Preservation") ~ "Fertility Preservation",
+      TRUE ~ NA_character_
+    ),
+    ##2.Drug
+    Drug = case_when(
+      str_detect(Protocol, "hMG\\+rFSH") ~ "Dual",
+      str_detect(Protocol, "rFSH") & !str_detect(Protocol, "hMG") ~ "rFSH",
+      str_detect(Protocol, "hMG") & !str_detect(Protocol, "rFSH") ~ "hMG",
+      TRUE ~ NA_character_
+    ),
+    ##3.Dose
+    Dose_iu = as.numeric(str_extract(Protocol, "\\d+"))
+    
+  ) %>%
+  relocate(Protocol_type, Drug, Dose_iu, .after = Protocol)
+
+
+##Checks
+freshdata %>% count(Protocol_type) #59 Short, 6 Long, 4 Fertility Preservation, 21 egg donor
+freshdata %>% count(Drug) #30 rFSH, 15 hMG, 20 Dual, 25 NA
+
+##Drop original Protocol column, and derived Drug and Dose_iu columns as information is redundant, more info later, some is missing and randomly inputed
+freshdata <- freshdata %>%
+  select(-Protocol, -Dose_iu, -Drug)
+```
 
 ## Funding
 
@@ -191,19 +250,6 @@ freshdata <- freshdata %>%
 unique(freshdata$Funding)
 freshdata %>% 
   count(Funding)
-```
-
-## Male Factor
-```{r}
-unique(freshdata$Male_factor)
-
-freshdata <- freshdata %>%
-  mutate(
-    Male_factor = str_to_title(Male_factor)
-  )
-
-#QC
-unique(freshdata$Male_factor)
 ```
 
 ## Infertility Duration
@@ -281,54 +327,6 @@ freshdata <- freshdata %>%
   )
 ```
 
-## Protocol
-
-```{r}
-unique(freshdata$Protocol)
-
-freshdata <- freshdata %>%
-  mutate(
-    Protocol = Protocol %>%
-      str_squish() %>%
-      str_replace_all("(\\d+)\\s+iu", "\\1iu") %>%      # 225 iu to 225iu
-      str_replace("hMG\\+rRFSH", "hMG+rFSH") %>%        # typo fix
-      str_replace("Fertility preservation", "Fertility Preservation")
-  )
-
-##Derive 3 columns for clarity
-freshdata <- freshdata %>%
-  mutate(
-    ##1.Protocol type
-    Protocol_type = case_when(
-      str_detect(Protocol, "Long Agonist") ~ "Long Agonist",
-      str_detect(Protocol, "Short") ~ "Short Antagonist",
-      str_detect(Protocol, "Egg Donor") ~ "Egg Donor",
-      str_detect(Protocol, "Fertility Preservation") ~ "Fertility Preservation",
-      TRUE ~ NA_character_
-    ),
-    ##2.Drug
-    Drug = case_when(
-      str_detect(Protocol, "hMG\\+rFSH") ~ "Dual",
-      str_detect(Protocol, "rFSH") & !str_detect(Protocol, "hMG") ~ "rFSH",
-      str_detect(Protocol, "hMG") & !str_detect(Protocol, "rFSH") ~ "hMG",
-      TRUE ~ NA_character_
-    ),
-    ##3.Dose
-    Dose_iu = as.numeric(str_extract(Protocol, "\\d+"))
-    
-  ) %>%
-  relocate(Protocol_type, Drug, Dose_iu, .after = Protocol)
-
-
-##Checks
-freshdata %>% count(Protocol_type) #59 Short, 6 Long, 4 Fertility Preservation, 21 egg donor
-freshdata %>% count(Drug) #30 rFSH, 15 hMG, 20 Dual, 25 NA
-
-##Drop original Protocol column, and derived Drug and Dose_iu columns as information is redundant and repeats later
-freshdata <- freshdata %>%
-  select(-Protocol, -Dose_iu, -Drug)
-```
-
 ## Cycle
 ```{r}
 str(freshdata$Cycle_no)
@@ -347,7 +345,7 @@ freshdata <- freshdata %>%
   )
 ```
 
-## FSH and HmG
+## Clean FSH and hMG
 
 ```{r}
 #Clean
@@ -371,8 +369,12 @@ freshdata <- freshdata %>%
 print(unique(freshdata$Fsh_iu)) #30 different FSH doses
 
 print(unique(freshdata$H_mg)) #16 different H_mg doses
+```
 
-##Parse and derive parameters - FSH
+## Parse and derive parameters - FSH and hMG
+
+```{r}
+## FSH
 freshdata <- freshdata %>%
   mutate(parsed = map(Fsh_iu, parse_stimulation, prefix = "FSH")) %>%
   unnest(parsed)
@@ -380,7 +382,7 @@ freshdata <- freshdata %>%
 freshdata <- freshdata %>%
   relocate(starts_with("FSH_"), .after = Fsh_iu)
 
-##Parse and derive parameters - hMG
+## hMG
 freshdata <- freshdata %>%
   mutate(parsed = map(H_mg, parse_stimulation, prefix = "hMG")) %>%
   unnest(parsed)
@@ -391,6 +393,35 @@ freshdata <- freshdata %>%
 #drop original Fsh_iu and H_mg columns
 freshdata <- freshdata %>%
   select(-Fsh_iu, -H_mg, -Total_hmg, -Total_gonal_f_iu)
+```
+
+
+## Derive starting gonadotropin dose based on starting day and total gonadotropin dose
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Starting_gonadotropin_dose = case_when(
+      # Both start on day 1 (or same day) — dual stim from start
+      FSH_used == 1 & hMG_used == 1 & FSH_start_day == hMG_start_day ~ FSH_initial_dose + hMG_initial_dose,
+      # FSH only, or FSH starts before hMG
+      FSH_used == 1 & (hMG_used == 0 | FSH_start_day < hMG_start_day) ~ FSH_initial_dose,
+      # hMG only, or hMG starts before FSH
+      hMG_used == 1 & (FSH_used == 0 | hMG_start_day < FSH_start_day) ~ hMG_initial_dose,
+      TRUE ~ NA_real_
+    )
+  )
+
+freshdata <- freshdata %>%
+  mutate(
+    Total_gonadotropin_dose = FSH_total_dose + hMG_total_dose
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Starting_gonadotropin_dose,
+    Total_gonadotropin_dose,
+    .after = Protocol_type
+  )
 ```
 
 ## Trigger
@@ -444,6 +475,21 @@ freshdata <- freshdata %>%
 #Remove original H_cg_trigger column
 freshdata <- freshdata %>%
   select(-Trigger_h_cg)
+
+
+## Derive binary used columns
+freshdata <- freshdata %>%
+  mutate(
+    hCG_trigger_used        = if_else(str_detect(Trigger_mechanism, "hCG"), 1, 0),
+    GnRH_agonist_trigger_used = if_else(str_detect(Trigger_mechanism, "GnRH_agonist"), 1, 0)
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    hCG_trigger_used,
+    GnRH_agonist_trigger_used,
+    .after = Trigger_mechanism
+  )
 ```
 
 ## Other medication
@@ -543,6 +589,21 @@ freshdata <- freshdata %>%
 
 freshdata <- freshdata %>%
   select(-Fyremadel, -Total_fyremadel_iu)
+
+## Manual fix of incorrect GnRH antagonist dose
+freshdata <- freshdata %>%
+  mutate(GnRH_antagonist_total_dose = if_else(
+    Unique_number == "0848187Z",
+    1000,
+    GnRH_antagonist_total_dose
+  ))
+
+freshdata <- freshdata %>%
+  mutate(GnRH_antagonist_total_dose = if_else(
+    Unique_number == "8214741T",
+    1750,
+    GnRH_antagonist_total_dose
+  ))
 ```
 
 ## More other medications
@@ -609,6 +670,19 @@ freshdata <- freshdata %>%
   )
 ```
 
+## Deriving final total follicles 
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Final_total_follicles = Final_right_follicles + Final_left_follicles
+  ) %>%
+  relocate(
+    Final_total_follicles,
+    .after = Last_day_of_stim
+  )
+```
+
 ## Sperm parameters
 
 ```{r}
@@ -662,6 +736,8 @@ freshdata <- freshdata %>%
   )
 ```
 
+## Eggs
+
 ```{r}
 freshdata <- freshdata %>%
   mutate(
@@ -674,6 +750,26 @@ freshdata <- freshdata %>%
 freshdata <- freshdata %>%
   mutate(
     Fertilisation_rate = No_fertilised / No_mature_eggs
+  )
+```
+
+## Derive Stimulation type for EDA
+```{r}
+## think there is one from earlier that gets derived and then dropped, so could keep that
+freshdata <- freshdata %>%
+  mutate(
+    Treatment_type = case_when(
+      FSH_used == 1 & hMG_used == 0 ~ "FSH_only",
+      FSH_used == 0 & hMG_used == 1 ~ "hMG_only",
+      FSH_used == 1 & hMG_used == 1 ~ "Dual",
+      TRUE ~ "None"
+    )
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Treatment_type,
+    .after = Protocol_type
   )
 ```
 
@@ -696,14 +792,75 @@ freshdata <- freshdata %>%
     Progesterone_total_dose,
     .after = hMG_avg_daily
   )
+```
 
-str(freshdata)
-cat("Final dataset size:", dim(freshdata), "\n")
+## Protocol deriving:
+## Egg donor and fertility preservation patients given GnRH antagonists are are on the short antagonist protocol as they are given GnRH antagonists
+
+```{r}
+## Derive Egg donor parameter
+freshdata <- freshdata %>%
+  mutate(
+    Egg_donor = if_else(Protocol_type == "Egg Donor", 1, 0),
+    
+    Protocol_type = case_when(
+      Protocol_type %in% c("Egg Donor", "Fertility Preservation") & GnRH_antagonist_used == 1 ~ "Short Antagonist",
+      Protocol_type %in% c("Egg Donor", "Fertility Preservation") & GnRH_antagonist_used == 0 ~ "Long Agonist",
+      TRUE ~ Protocol_type
+    )
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Egg_donor,
+    .after = Aetiology
+  )
+```
+
+## Create Aetiology group variable
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Aetiology_group = case_when(
+      Egg_donor == 1                          ~ "Egg_donor",
+      
+      Aetiology %in% c("Tubal Factors",
+                       "DOR",
+                       "Endometriosis",
+                       "Uterine Factor",
+                       "Endometriosis + Uterine Factor",
+                       "Endometriosis + Tubal Factors",
+                       "PCO",
+                       "DOR + Endometriosis")    ~ "Female_factor",
+      
+      Aetiology %in% c("Other",
+                       "Same Sex Relationship",
+                       "Fertility Preservation",
+                       "Single Woman",
+                       "Surrogate")                    ~ "Other",
+      
+      Aetiology == "Unexplained"                       ~ "Unexplained",
+      
+      Aetiology %in% c("No Female Factor",
+                       "No female factor")             ~ "No_female_factor",
+      
+      TRUE ~ NA_character_
+    )
+  )
+
+freshdata <- freshdata %>%
+  relocate(
+    Aetiology_group,
+    .after = Aetiology
+  )
 ```
 
 ## Save
 
 ```{r}
+str(freshdata)
+cat("Final dataset size:", dim(freshdata), "\n")
+
 write_csv(
   freshdata,
   here("data", "processed", "freshdata_cleaned.csv")
@@ -711,3 +868,5 @@ write_csv(
 
 names(freshdata)
 ```
+
+
