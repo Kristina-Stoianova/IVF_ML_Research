@@ -7,6 +7,7 @@ date: "2026-03-28"
 ```{r setup, message=FALSE, warning=FALSE}
 library(naniar)
 library(tidyverse)
+library(dplyr)
 library(gridExtra)
 library(corrplot)
 library(pheatmap)
@@ -29,23 +30,6 @@ freshdata <- freshdata %>%
   select(-Baseline_follicle_size, -Second_scan_follicle_size, -Final_follicle_size)
 ```
 
-```{r}
-freshdata <- freshdata %>%
-  mutate(
-    Final_total_follicles = Final_right_follicles + Final_left_follicles
-  ) %>%
-  relocate(
-    Final_total_follicles,
-    .after = Last_day_of_stim
-  )
-
-freshdata <- freshdata %>%
-  relocate(
-    Final_follicles_lessthan_11.9,
-    .after = Final_left_follicles
-  )
-```
-
 ## Filter first cycle and binary encoding 
 ```{r}
 freshdata <- freshdata %>%
@@ -53,76 +37,8 @@ freshdata <- freshdata %>%
 
 print(table(freshdata$Treatment_type))
 
-##need to add _ to main cleaning pipeline for categorical variables
 
-freshdata <- freshdata %>%
-  mutate(Aetiology_group = case_when(
-    
-    #Female factor group
-    Aetiology %in% c("Tubal Factors", 
-                     "DOR",
-                     "Endometriosis",
-                     "Uterine Factor",
-                     "Endometriosis + Uterine Factor",
-                     "Endometriosis + Tubal Factors",
-                     "PCO",
-                     "DOR + Endometriosis + PCO")  ~ "Female_factor",
-    
-    #Other group
-    Aetiology %in% c("Other",
-                     "Same Sex Relationship",
-                     "Fertility Preservation",
-                     "Single woman",
-                     "Surrogate")           ~ "Other",
-    
-    #Unexplained
-    Aetiology == "Unexplained"              ~ "Unexplained",
-    
-    #No female factor
-    Aetiology %in% c("No Female Factor",
-                     "No female factor")   ~ "No_female_factor",
-  ))
-
-
-freshdata <- freshdata %>%
-  mutate(
-    Treatment_type = case_when(
-      FSH_used == 1 & hMG_used == 0 ~ "FSH_only",
-      FSH_used == 0 & hMG_used == 1 ~ "hMG_only",
-      FSH_used == 1 & hMG_used == 1 ~ "Dual",
-      TRUE ~ "None"
-    )
-  )
-
-freshdata <- freshdata %>%
-  relocate(
-    Treatment_type,
-    .after = Protocol_type
-  )
-
-#create total stimulation dose
-freshdata <- freshdata %>%
-  mutate(
-    Total_stim_dose = FSH_total_dose + hMG_total_dose
-  ) %>%
-  relocate(
-    Total_stim_dose,
-    .after = hMG_avg_daily
-  )
-
-freshdata <- freshdata %>%
-  mutate(
-    hCG_trigger_used = ifelse(!is.na(hCG_trigger_dose) & hCG_trigger_dose > 0, 1, 0),
-    GnRH_trigger_used = ifelse(!is.na(GnRH_agonist_trigger_dose) & GnRH_agonist_trigger_dose > 0, 1, 0)
-  )
-
-freshdata <- freshdata %>%
-  relocate(
-    hCG_trigger_used, GnRH_trigger_used,
-    .after = Progesterone_total_dose
-  )
-
-
+## DELETE THIS AT THE END
 write_csv(
   freshdata,
   here("data", "processed", "freshdata_cleaned_new.csv")
@@ -389,16 +305,15 @@ cor_with_outcome1 %>%
 ## smaller correlation matrices
 ```{r}
 baseline_vars <- c(
+    "Unique_number",
+    "Aetiology_group",
     "Age", 
     "BMI",
     "Baseline_AMH",
     "Baseline_total_follicles",
-    "Baseline_left_follicles",
-    "Baseline_right_follicles",
     "Baseline_endometrium",
-    "No_mature_eggs",
-    "No_fertilised",
-    "Fertilisation_rate"
+    "Protocol_type",
+    "No_mature_eggs"
     )
 
 baseline_df <- freshdata %>%

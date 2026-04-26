@@ -1,0 +1,55 @@
+---
+title: "Predicting low responders"
+output: html_document
+date: "2026-04-08"
+---
+
+```{r}
+freshdata <- freshdata %>%
+  mutate(
+    Low_responder = ifelse(No_mature_eggs <= 4, 1, 0),
+    Low_responder = factor(Low_responder, levels = c(0, 1), labels = c("Not_low", "Low"))
+  )
+
+freshdata$Aetiology_group <- factor(freshdata$Aetiology_group)
+
+model_df <- freshdata %>%
+  dplyr::select(Low_responder, Age, BMI, Baseline_AMH, Baseline_total_follicles,
+         Baseline_endometrium, Aetiology_group)
+```
+
+```{r}
+#simple imputation
+model_df <- model_df %>%
+  mutate(
+    Age = ifelse(is.na(Age), median(Age, na.rm = TRUE), Age),
+    BMI = ifelse(is.na(BMI), median(BMI, na.rm = TRUE), BMI),
+    Baseline_AMH = ifelse(is.na(Baseline_AMH), median(Baseline_AMH, na.rm = TRUE), Baseline_AMH),
+    Baseline_total_follicles = ifelse(is.na(Baseline_total_follicles),
+                                      median(Baseline_total_follicles, na.rm = TRUE),
+                                      Baseline_total_follicles),
+    Baseline_endometrium = ifelse(is.na(Baseline_endometrium),
+                                  median(Baseline_endometrium, na.rm = TRUE),
+                                  Baseline_endometrium)
+  )
+
+get_mode <- function(x) {
+  ux <- na.omit(unique(x))
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+model_df$Aetiology_group[is.na(model_df$Aetiology_group)] <- get_mode(model_df$Aetiology_group)
+model_df$Aetiology_group <- factor(model_df$Aetiology_group)
+```
+
+```{r}
+logit_model1 <- glm(
+  Low_responder ~ Age + BMI + Baseline_AMH +
+    Baseline_endometrium + Aetiology_group,
+  data = model_df,
+  family = binomial
+)
+
+summary(logit_model1)
+```
+
