@@ -1,0 +1,432 @@
+---
+title: "Missingness"
+output: html_document
+date: "2026-04-27"
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(naniar)
+library(gt)
+library(scales)
+library(cowplot)
+library(VIM)
+library(Amelia)
+library(UpSetR)
+library(visdat)
+library(patchwork)
+#library(mice)
+#library(missForest)
+
+library(here)
+here::here()
+
+#alldata <- read_csv(
+#  here("data","processed","freshdata_cleaned1.csv"),
+#  name_repair = "minimal"
+#)
+
+shortdata <- read_csv(
+  here("data", "processed", "shortprotocol_firstconsentedcycle.csv"),
+  name_repair = "minimal"
+)
+
+drop_cols <- c("Unique_number", "Baseline_follicle_size", "Second_scan_follicle_size", "Final_follicle_size" )
+
+drop_cols <- c("Baseline_follicle_size", "Second_scan_follicle_size", "Final_follicle_size", "No_fertilised", "Fertilisation_rate", "Sperm_source", "Pre_wash_sperm_conc", "Pre_wash_sperm_motility", "Pre_wash_normal_sperm_morphology", "Post_wash_sperm_conc","Post_wash_sperm_motility", "Semen_vol", "Sperm_prep","Sperm_mobility", "Baseline_left_follicles", "Baseline_right_follicles", "Second_scan_right_follicles", "Second_scan_left_follicles", "Final_left_follicles", "Final_right_follicles", "Day_of_ec", "Egg_donor_flag", "Aetiology_clean")
+
+#alldata <- alldata %>%
+#  select(
+#    -any_of(drop_cols)
+#  )
+
+shortdata <- shortdata %>%
+  dplyr::select(
+    -any_of(drop_cols)
+  )
+```
+
+
+```{r}
+baseline_vars <- c(
+  "Aetiology", "Aetiology_group", "Egg_donor", "PGD",
+  "Male_factor", "Funding", "Infertility_duration", "Treatment_type",
+  "Age", "BMI", "Baseline_FSH", "Baseline_AMH",
+  "Baseline_AFC", "Baseline_E2", "Baseline_total_follicles",
+  "Baseline_endometrium", "Cycle_no"
+)
+
+protocol_vars <- c(
+  "Protocol_type", "Treatment_type", "FSH_used", "hMG_used",
+  "Starting_gonadotropin_dose", "Total_gonadotropin_dose",
+  "GnRH_antagonist_used", "GnRH_antagonist_start_day",
+  "GnRH_antagonist_end_day", "GnRH_antagonist_duration",
+  "GnRH_antagonist_total_dose",
+  "FSH_total_dose", "FSH_duration", "FSH_initial_dose",
+  "FSH_start_day", "FSH_final_dose", "FSH_max_dose",
+  "FSH_min_dose", "FSH_dose_changes", "FSH_change_day_1",
+  "FSH_change_day_2", "FSH_change_day_3", "FSH_dose_delta",
+  "FSH_dose_trend", "FSH_avg_daily",
+  "hMG_total_dose", "hMG_duration", "hMG_initial_dose",
+  "hMG_start_day", "hMG_final_dose", "hMG_max_dose",
+  "hMG_min_dose", "hMG_dose_changes", "hMG_change_day_1",
+  "hMG_change_day_2", "hMG_change_day_3", "hMG_dose_delta",
+  "hMG_dose_trend", "hMG_avg_daily",
+  "hCG_trigger_used", "GnRH_agonist_trigger_used",
+  "hCG_trigger_dose", "GnRH_agonist_trigger_dose",
+  "Last_day_of_stim"
+)
+
+trigger_vars <- c("hCG_trigger_used", "GnRH_agonist_trigger_used",
+  "hCG_trigger_dose", "GnRH_agonist_trigger_dose")
+
+monitoring_vars <- c(
+  "Second_scan_right_follicles", "Second_scan_left_follicles",
+  "Second_scan_endometrium", "Second_scan_follicle_size", "Final_total_follicles", "Final_right_follicles",
+  "Final_follicles_lessthan_11.9", "Final_left_follicles",
+  "Final_endometrium_ec"
+)
+
+#male_vars <- c(
+#  "Sperm_source", "Pre_wash_sperm_conc", "Pre_wash_sperm_motility",
+#  "Pre_wash_normal_sperm_morphology", "Post_wash_sperm_conc",
+#  "Post_wash_sperm_motility", "Semen_vol", "Sperm_prep",
+#  "Sperm_mobility"
+#)
+
+outcome_vars <- c(
+  "No_eggs", "No_mature_eggs", "Proportion_mature"
+)
+
+
+
+
+b1 <- c(
+  "Aetiology", "Aetiology_group", "Egg_donor", "PGD",
+  "Male_factor", "Funding", "Infertility_duration", "Treatment_type",
+  "Age", "BMI", "Baseline_FSH", "Baseline_AMH",
+  "Baseline_AFC", "Baseline_E2", "Baseline_total_follicles",
+  "Baseline_endometrium", "Cycle_no", "Protocol_type", "Treatment_type", "FSH_used", "hMG_used",
+  "Starting_gonadotropin_dose", "Total_gonadotropin_dose",
+  "GnRH_antagonist_used", "GnRH_antagonist_start_day",
+  "GnRH_antagonist_end_day", "GnRH_antagonist_duration",
+  "GnRH_antagonist_total_dose",
+  "FSH_total_dose", "FSH_duration", "FSH_initial_dose",
+  "FSH_start_day", "FSH_final_dose", "FSH_max_dose",
+  "FSH_min_dose", "FSH_dose_changes", "FSH_change_day_1",
+  "FSH_change_day_2", "FSH_change_day_3", "FSH_dose_delta",
+  "FSH_dose_trend", "FSH_avg_daily",
+  "hMG_total_dose", "hMG_duration", "hMG_initial_dose",
+  "hMG_start_day", "hMG_final_dose", "hMG_max_dose",
+  "hMG_min_dose", "hMG_dose_changes", "hMG_change_day_1",
+  "hMG_change_day_2", "hMG_change_day_3", "hMG_dose_delta",
+  "hMG_dose_trend", "hMG_avg_daily",
+  "hCG_trigger_used", "GnRH_agonist_trigger_used",
+  "hCG_trigger_dose", "GnRH_agonist_trigger_dose",
+  "Last_day_of_stim", "hCG_trigger_used", "GnRH_agonist_trigger_used",
+  "hCG_trigger_dose", "GnRH_agonist_trigger_dose","Second_scan_right_follicles", "Second_scan_left_follicles",
+  "Second_scan_endometrium", "Second_scan_follicle_size", "Final_total_follicles", "Final_right_follicles",
+  "Final_follicles_lessthan_11.9", "Final_left_follicles",
+  "Final_endometrium_ec", "No_eggs", "No_mature_eggs", "Proportion_mature"
+)
+```
+
+```{r}
+df_baseline   <- shortdata %>% dplyr::select(any_of(baseline_vars))
+df_protocol   <- shortdata %>% dplyr::select(any_of(protocol_vars))
+df_monitoring <- shortdata %>% dplyr::select(any_of(monitoring_vars))
+df_trigger <- shortdata %>% dplyr::select(any_of(trigger_vars))
+#df_male       <- shortdata %>% dplyr::select(any_of(male_vars))
+df_final      <- shortdata %>% dplyr::select(any_of(outcome_vars))
+df_big <- shortdata %>% dplyr::select(any_of(b1))
+```
+
+```{r}
+df_final <- df_final %>%
+  rename(
+    "Number of oocytes" = "No_eggs",
+    "Number of MII oocytes" = "No_mature_eggs",
+    "Proportion MII" = "Proportion_mature"
+  )
+
+df_monitoring <- df_monitoring %>%
+  rename(
+  "Final follicles <11.9 mm" = "Final_follicles_lessthan_11.9",
+  "Final endometrium" = "Final_endometrium_ec"
+)
+```
+
+
+```{r, fig.width=12, fig.height=8}
+names(df_baseline) <- gsub("_", " ", names(df_baseline))
+names(df_monitoring) <- gsub("_", " ", names(df_monitoring))
+#names(df_male) <- gsub("_", " ", names(df_male))
+names(df_final) <- gsub("_", " ", names(df_final))
+names(df_protocol) <- gsub("_", " ", names(df_protocol))
+names(df_trigger) <- gsub("_", " ", names(df_trigger))
+
+miss1 <- gg_miss_var(df_baseline, show_pct = TRUE) +
+  labs(title = "Baseline Variables") +
+  theme(
+    axis.text.y = element_text(size = 15, colour = "black"),
+    axis.text.x = element_text(size = 15, colour = "black"),
+    axis.title.x = element_text(size = 15, colour = "black", face = "bold"),
+    axis.title.y = element_text(size = 15, colour = "black", face = "bold"),
+    plot.title = element_text(size = 15, face = "bold")
+  )
+
+miss1
+
+miss2 <- gg_miss_var(df_trigger, show_pct = TRUE) +
+  labs(title = "Trigger Protocol Variables") +
+  theme(
+    axis.text.y = element_text(size = 15, colour = "black"),
+    axis.text.x = element_text(size = 15, colour = "black"),
+    axis.title.x = element_text(size = 15, colour = "black", face = "bold"),
+    axis.title.y = element_text(size = 15, colour = "black", face = "bold"),
+    plot.title = element_text(size = 15, face = "bold")
+  )
+
+miss2
+
+miss3 <- gg_miss_var(df_monitoring, show_pct = TRUE) +
+  labs(title = "Cycle Monitoring Variables") +
+  theme(
+    axis.text.y = element_text(size = 11, colour = "black"),
+    axis.text.x = element_text(size = 10, colour = "black"),
+    axis.title.x = element_text(size = 13, colour = "black", face = "bold"),
+    axis.title.y = element_text(size = 13, colour = "black", face = "bold"),
+    plot.title = element_text(size = 15, face = "bold")
+  )
+
+miss3
+
+miss4 <- gg_miss_var(df_male, show_pct = TRUE) +
+  labs(title = "Missingness: Male Variables") +
+  theme(
+    axis.text.y = element_text(size = 12, colour = "black"),
+    axis.text.x = element_text(size = 10, colour = "black"),
+    axis.title.x = element_text(size = 13, colour = "black", face = "bold"),
+    axis.title.y = element_text(size = 13, colour = "black", face = "bold"),
+    plot.title = element_text(size = 15, face = "bold")
+  )
+miss4
+
+miss5 <- gg_miss_var(df_final, show_pct = TRUE) +
+  labs(title = "Final Variables") +
+  theme(
+    axis.text.y = element_text(size = 12, colour = "black"),
+    axis.text.x = element_text(size = 10, colour = "black"),
+    axis.title.x = element_text(size = 13, colour = "black", face = "bold"),
+    axis.title.y = element_text(size = 13, colour = "black", face = "bold"),
+    plot.title = element_text(size = 15, face = "bold")
+  )
+miss5
+
+miss6 <- gg_miss_var(df_protocol, show_pct = TRUE) +
+  labs(title = "Stimulation Variables") +
+    theme(
+    axis.text.y = element_text(size = 12, colour = "black"),
+    axis.text.x = element_text(size = 10, colour = "black"),
+    axis.title.x = element_text(size = 13, colour = "black", face = "bold"),
+    axis.title.y = element_text(size = 13, colour = "black", face = "bold"),
+    plot.title = element_text(size = 15, face = "bold")
+  )
+
+miss6
+
+missing_figure <- 
+  (miss1 | miss3) /
+  (miss2 | miss4)
+
+missing_figure
+```
+
+## gg miss upset plots
+
+```{r, fig.width=6, fig.height=6}
+gg_miss_upset(df_baseline, nsets = 5, text.scale = c(2, 2, 2, 2, 2, 2))
+
+gg_miss_upset(df_monitoring, nsets = n_var_miss(df_monitoring))
+              
+gg_miss_upset(df_monitoring, nsets = 6,  text.scale = c(2, 2, 2, 2, 2, 2))
+
+
+gg_miss_upset(df_male, nsets = n_var_miss(df_male))
+```
+
+```{r}
+gg_miss_upset(
+  df_baseline,
+  sets = c(
+    "Baseline_AFC_NA",
+    "Baseline_E2_NA",
+    "Baseline_FSH_NA",
+    "Infertility_duration_NA",
+    "Baseline_AMH_NA"
+  ),
+  sets.bar.color = "grey30",
+  main.bar.color = "grey30",
+  matrix.color = "grey30",
+  shade.color = "grey95",
+  text.scale = c(1.5, 1.4, 1.3, 1.2, 1.4, 1.3),
+  point.size = 3,
+  line.size = 0.8,
+  mainbar.y.label = "Intersection size",
+  sets.x.label = "Number missing",
+  order.by = "freq",
+  keep.order = TRUE
+)
+```
+
+## Summary of misisng data
+
+```{r}
+vars_with_missing <- names(df_big)[colSums(is.na(df_big)) > 0]
+df_plot <- df_big[, vars_with_missing]
+colnames(df_plot) <- gsub("_", " ", colnames(df_plot))
+
+vismiss1 <- vis_miss(df_plot, cluster = TRUE, sort_miss = TRUE, show_perc_col = FALSE) +
+  scale_fill_manual(
+    values = c("FALSE" = "#4682B4", "TRUE" = "#D64545"),
+    labels = c("FALSE" = "Non-missing", "TRUE" = "Missing")
+  ) +
+  labs(fill = "") +
+  theme(
+    axis.text.x = element_text(angle = 75, hjust = 1, size = 13, colour = "black"),
+    axis.text.y = element_text(size = 13),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 10)
+  )
+
+vismiss1
+
+ggsave("vis_miss_allmissing.png", vismiss1, dpi = 600)
+```
+
+
+
+## Testing for MNAR
+```{r}
+shortdata <- shortdata %>%
+  mutate(
+    AFC_missing = is.na(Baseline_AFC),
+    E2_missing = is.na(Baseline_E2),
+    FSH_missing = is.na(Baseline_FSH)
+  )
+
+## no
+wilcox.test(Age ~ E2_missing, data = shortdata)
+```
+
+```{r}
+miss_table <- shortdata %>%
+  summarise(across(everything(), list(
+    pct_miss = ~ round(mean(is.na(.)) * 100, 1),
+    n_miss   = ~ sum(is.na(.))
+  ))) %>%
+  pivot_longer(
+    everything(),
+    names_to      = c("variable", ".value"),
+    names_pattern = "(.+)_(pct_miss|n_miss)"
+  ) %>%
+  arrange(desc(pct_miss)) %>%
+  filter(pct_miss > 0) %>%
+  mutate(
+    variable = gsub("_", " ", variable),
+    variable = str_to_sentence(variable)
+  )
+
+miss_table
+```
+
+```{r}
+packageVersion("naniar")
+packageVersion("Amelia")
+packageVersion("cowplot")
+packageVersion("dplyr")
+packageVersion("UpSetR")
+packageVersion("VIM")
+packageVersion("ggplot2")
+packageVersion("ggpubr")
+packageVersion("ggcorrplot")
+packageVersion("patchwork")
+```
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(forcats)
+library(scales)
+
+# 1. Calculate missingness and subset variables >25% missing
+missing_vars_over25 <- shortdata %>%
+  summarise(across(
+    everything(),
+    ~ sum(is.na(.))
+  )) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "Variable",
+    values_to = "Missing"
+  ) %>%
+  mutate(
+    Total = nrow(df),
+    Percent_missing = (Missing / Total) * 100
+  ) %>%
+  filter(Percent_missing > 25) %>%
+  arrange(desc(Percent_missing))
+
+# View the subset
+missing_vars_over25
+
+
+missing_vars_over25 <- missing_vars_over25 %>%
+  mutate(
+    Variable_clean = case_when(
+      Variable == "Baseline_AFC" ~ "Baseline AFC",
+      Variable == "Baseline_E2" ~ "Baseline E2",
+      Variable == "Baseline_FSH" ~ "Baseline FSH",
+      Variable == "Second_scan_left_follicles" ~ "Second scan left follicles",
+      Variable == "Second_scan_right_follicles" ~ "Second scan right follicles",
+      Variable == "Second_scan_follicle_size" ~ "Second scan follicle size",
+      Variable == "Second_scan_endometrium" ~ "Second scan endometrium",
+      Variable == "Infertility_duration" ~ "Infertility duration",
+      TRUE ~ Variable
+    )
+  )
+
+ggplot(
+  missing_vars_over25,
+  aes(
+    x = Percent_missing,
+    y = fct_reorder(Variable_clean, Percent_missing)
+  )
+) +
+  geom_col(width = 0.7, fill = "#648FFF") +
+  geom_text(
+    aes(label = paste0(round(Percent_missing, 1), "%")),
+    hjust = -0.1,
+    size = 4
+  ) +
+  scale_x_continuous(
+    limits = c(0, max(missing_vars_over25$Percent_missing) + 10),
+    labels = label_percent(scale = 1)
+  ) +
+  labs(
+    title = "Variables with >25% missingness",
+    x = "% missing",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text.y = element_text(size = 12),
+    panel.grid.major.y = element_blank()
+  )
+```
+
