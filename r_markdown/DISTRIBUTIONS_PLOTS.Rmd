@@ -1,0 +1,619 @@
+---
+title: "Distributions and Plots"
+output: html_document
+date: "2026-06-05"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(ggcorrplot)
+library(patchwork)
+library(corrplot)
+
+library(here)
+here::here()
+
+df <- read_csv(
+  here("data", "processed", "shortprotocol_firstconsentedcycle.csv"),
+  name_repair = "minimal"
+)
+```
+## Overall cohort descriptive stats
+
+```{r}
+summary_stats <- function(x) {
+  x <- x[!is.na(x)]  # remove NAs
+  
+  data.frame(
+    n = length(x),
+    mean = mean(x),
+    sd = sd(x),
+    median = median(x),
+    IQR = IQR(x),
+    min = min(x),
+    max = max(x)
+  )
+}
+```
+
+
+```{r}
+summary_stats1 <- function(x) {
+  x <- x[!is.na(x)]
+  
+  if (length(x) == 0) {
+    return(data.frame(
+      n = 0,
+      mean = NA,
+      sd = NA,
+      median = NA,
+      IQR = NA,
+      min = NA,
+      max = NA
+    ))
+  }
+  
+  data.frame(
+    n = length(x),
+    mean = mean(x),
+    sd = sd(x),
+    median = median(x),
+    IQR = IQR(x),
+    min = min(x),
+    max = max(x)
+  )
+}
+```
+
+```{r}
+summary_stats1(df$FSH_initial_dose[df$FSH_initial_dose > 0])
+1
+summary_stats(df$hMG_initial_dose[df$hMG_initial_dose > 0])
+```
+
+
+
+```{r}
+mean(df$Age) #36.1
+mean(df$BMI, na.rm = TRUE) #23.1
+median(df$Baseline_AMH, na.rm = TRUE) #16.6
+median(df$Baseline_endometrium, na.rm = TRUE) #3.8
+median(df$Baseline_total_follicles, na.rm = TRUE) #16
+
+mean(df$Total_gonadotropin_dose) ##3061.5
+median(df$Total_gonadotropin_dose) #2925
+mean(df$Starting_gonadotropin_dose) #298.6
+median(df$Starting_gonadotropin_dose) #300
+
+mean(df$GnRH_antagonist_total_dose) #1573.7
+median(df$GnRH_antagonist_total_dose) #1500
+
+## DOESNT CONSIDER THE PROCOL, just the gonadotrophin
+
+median(df$FSH_total_dose[df$FSH_total_dose != 0], na.rm = TRUE) #2475
+mean(df$FSH_total_dose[df$FSH_total_dose != 0], na.rm = TRUE) #2498.0
+
+median(df$FSH_initial_dose[df$FSH_initial_dose != 0], na.rm = TRUE) #225
+mean(df$FSH_initial_dose[df$FSH_initial_dose != 0], na.rm = TRUE) #246.3
+
+median(df$hMG_total_dose[df$hMG_total_dose != 0], na.rm = TRUE) #1650
+mean(df$hMG_total_dose[df$hMG_total_dose != 0], na.rm = TRUE) #2046.6
+
+median(df$hMG_initial_dose[df$hMG_initial_dose != 0], na.rm = TRUE) #150
+mean(df$hMG_initial_dose[df$hMG_initial_dose != 0], na.rm = TRUE) #207.8
+
+## Should do within protocols
+
+median(df$No_mature_eggs) #9
+median(df$No_eggs) #13
+```
+
+
+## MII Outcome Distribution
+```{r, fig.width=10, fig.height=5}
+## Frequency histogram
+
+median(df$No_mature_eggs) ##9
+IQR(df$No_mature_eggs) ##12
+mean(df$No_mature_eggs) ##11.42623
+sd(df$No_mature_eggs) ##8.241074
+
+
+p1 <- ggplot(df, aes(x = No_mature_eggs)) +
+  geom_histogram(bins = 10, fill = "#4682B4", colour = "white") +
+  labs(x = "MII oocyte count",
+       y = "Frequency",
+       title = "") +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 20),   # x and y axis titles
+    axis.text  = element_text(size = 20),   # tick labels
+    plot.title = element_text(size = 16, face = "bold")
+  )
+
+p2 <- ggplot(df, aes(x = log1p(No_mature_eggs))) +
+  geom_histogram(bins = 10, fill = "#4682B4", colour = "white") +
+  labs(x = "log1p(MII oocyte count)", y = "Frequency") + labs(title = "B") +
+  theme_classic()
+
+p2 <- ggplot(df, aes(x = log1p(No_mature_eggs))) +
+  geom_histogram(bins = 10, fill = "#4682B4", colour = "white") +
+  labs(x = "log1p(MII oocyte count)",
+       y = "Frequency",
+       title = "") +
+  theme_classic() +
+  theme(
+    axis.title = element_text(size = 20),   # x and y axis titles
+    axis.text  = element_text(size = 20),   # tick labels
+    plot.title = element_text(size = 16, face = "bold")
+  )
+  
+
+
+p3 <- ggplot(df, aes(x = sqrt(No_mature_eggs))) +
+  geom_histogram(bins = 10, fill = "#4682B4", colour = "white") +
+  labs(x = "sqrt(MII oocyte count)", y = "Frequency") +
+  theme_classic()
+
+
+p4 <- p1 | p2
+p4
+
+p1
+p2
+ggsave("mii_raw_dist.png", p1, dpi = 600)
+ggsave("mii_transf_dist.png", p2, dpi = 600)
+
+```
+
+## Baseline Variable Distributions
+```{r, fig.width=8, fig.height=8}
+plot_hist <- function(data, var, xlab, bins = 10) {
+  ggplot(data, aes(x = {{ var }})) +
+    geom_histogram(
+      bins = bins,
+      fill = "#4682B4",
+      colour = "white"
+    ) +
+    theme_classic() +
+    labs(
+      x = xlab,
+      y = "Frequency"
+    ) +
+    theme(
+      axis.title = element_text(size = 20),
+      axis.text = element_text(size = 20)
+    )
+}
+
+p_age <- plot_hist(df, Age, "Age (years)") + labs(title = "")
+p_bmi <- plot_hist(df, BMI, "BMI") + labs(title = "")
+p_amh <- plot_hist(df, Baseline_AMH, "AMH (pmol/L)") + labs(title = "C")
+p_amh_log <- plot_hist(df, log1p(Baseline_AMH), "log1p(AMH) (pmol/L)") + labs(title = "D")
+p_follicles <- plot_hist(df, Baseline_total_follicles, "Baseline follicle count") + labs(title = "E")
+p_follicles_log <- plot_hist(df, log1p(Baseline_total_follicles), "log1p(Baseline follicle count)") + labs(title = "F")
+p_endo <- plot_hist(df, Baseline_endometrium, "Baseline endometrial thickness (mm)") + labs(title = "G")
+p_endo_log <- plot_hist(df, log1p(Baseline_endometrium), "log1p(Baseline endometrial thickness (mm))") + labs(title = "H")
+
+baseline_dist_plot <- 
+  (p_age | p_bmi) /
+  (p_amh | p_amh_log) /
+  (p_follicles | p_follicles_log ) /
+  (p_endo | p_endo_log ) +
+  plot_annotation(
+    #title = "Distribution of baseline clinical variables"
+  )
+
+ggsave("age_raw_dist.png", p_age, dpi = 600)
+ggsave("bmi_raw_dist.png", p_bmi, width = 6, dpi = 600)
+
+baseline_dist_plot
+```
+## Relationships between baseline and outcome variables
+```{r, fig.width=8, fig.height=8}
+df <- df %>%
+  mutate(
+    log_AMH = log1p(Baseline_AMH),
+    log_follicles = log1p(Baseline_total_follicles)
+  )
+
+plot_vs_mii <- function(data, xvar, xlab) {
+  ggplot(data, aes(x = {{ xvar }}, y = No_mature_eggs)) +
+    geom_point(alpha = 1, size = 1.5, colour = "#4682B4") +
+    geom_smooth(method = "lm", se = FALSE, linewidth = 0.7, colour = "#C23B22") +
+    theme_classic() +
+    labs(
+      x = xlab,
+      y = "MII oocyte count"
+    ) +
+    theme(
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 10)
+    )
+}
+
+p_age_mii  <- plot_vs_mii(df, Age, "Age (years)") + labs(title = "")
+p_bmi_mii  <- plot_vs_mii(df, BMI, "BMI") + labs(title = "")
+p_amh_mii  <- plot_vs_mii(df, log_AMH, "log1p(AMH) (pmol/L)") + labs(title = "")
+p_foll_mii <- plot_vs_mii(df, log_follicles, "log1p(Baseline follicle count)") + labs(title = "")
+p_endo_mii <- plot_vs_mii(df, Baseline_endometrium, "Baseline endometrial thickness (mm)") + labs(title = "")
+
+fig_mii_relationships <-
+  (p_age_mii | plot_spacer()) /
+  (p_amh_mii | plot_spacer()) /
+  (p_foll_mii | plot_spacer()) +
+  plot_annotation(
+    #title = "Relationships between baseline clinical variables and MII oocyte yield"
+  )
+
+fig_mii_relationships
+
+ggsave("scatter_baseline_mii.png", fig_mii_relationships, dpi = 600)
+```
+
+## Relationships between baseline variables
+```{r, fig.width=8, fig.height=3}
+plot_pairwise <- function(data, xvar, yvar, xlab, ylab) {
+  ggplot(data, aes(x = {{ xvar }}, y = {{ yvar }})) +
+    geom_point(alpha = 1, size = 1.5, colour = "#4682B4") +
+    geom_smooth(method = "lm", se = FALSE, linewidth = 0.9, colour = "#C23B22") +
+    theme_classic() +
+    labs(
+      x = xlab,
+      y = ylab
+    ) +
+    theme(
+      axis.title = element_text(size = 11),
+      axis.text = element_text(size = 10)
+    )
+}
+
+p_age_amh <- plot_pairwise(
+  df,
+  Age, log_AMH,
+  "Age (years)", "log1p(AMH) (pmol/L)"
+) + labs(title = "A")
+
+p_age_foll <- plot_pairwise(
+  df,
+  Age, log_follicles,
+  "Age (years)", "log1p(Baseline follicle count)"
+) + labs(title = "B")
+
+p_foll_amh <- plot_pairwise(
+  df,
+  log_follicles, log_AMH,
+  "log1p(Baseline follicle count)", "log1p(AMH) (pmol/L)"
+) + labs(title = "C")
+
+fig_predictor_relationships <-
+  (p_age_amh | p_age_foll | p_foll_amh) +
+  plot_annotation(
+    #title = "Relationships between selected baseline predictors"
+  )
+
+fig_predictor_relationships
+```
+## Distributions of summary stimualation variables
+```{r}
+p_start_dose <- ggplot(df, aes(x = factor(Starting_gonadotropin_dose))) +
+  geom_bar(fill = "#4682B4", colour = "white") +
+  theme_classic() +
+  labs(
+    x = "Starting gonadotropin dose (IU)",
+    y = "Frequency"
+  ) + labs(title = "A")
+
+p_total_dose <- ggplot(df, aes(x = Total_gonadotropin_dose)) +
+  geom_histogram(
+    binwidth = 500,
+    boundary = 0,
+    fill = "#4682B4",
+    colour = "white"
+  ) +
+  theme_classic() +
+  labs(
+    x = "Total gonadotropin dose (IU)",
+    y = "Frequency"
+  ) + labs(title = "B")
+
+p_antag_dose <- ggplot(df, aes(x = GnRH_antagonist_total_dose)) +
+  geom_histogram(
+    binwidth = 300,
+    boundary = 0,
+    fill = "#4682B4",
+    colour = "white"
+  ) +
+  theme_classic() +
+  labs(
+    x = "Total GnRH antagonist dose",
+    y = "Frequency"
+  ) + labs(title = "C")
+
+p_stim_duration <- ggplot(df, aes(x = factor(Last_day_of_stim))) +
+  geom_bar(fill = "#4682B4", colour = "white") +
+  theme_classic() +
+  labs(
+    x = "Duration of stimulation (days)",
+    y = "Frequency"
+  ) + labs(title = "D")
+
+
+treatment_dist_plot <-
+  (p_start_dose | p_total_dose) /
+  (p_antag_dose | p_stim_duration) +
+  plot_annotation(
+    #title = "Distribution of stimulation treatment variables"
+  )
+treatment_dist_plot
+```
+## FSH and hMG
+
+```{r, fig.width=8, fig.height=5}
+p_fsh_start_dose <- df %>%
+  filter(FSH_initial_dose > 0) %>%
+  ggplot(aes(x = factor(FSH_initial_dose))) +
+  geom_bar(fill = "#4682B4", colour = "white") +
+  theme_classic() +
+  labs(
+    title = "A",
+    x = "Starting FSH dose (IU)",
+    y = "Frequency"
+  ) + labs(title = "A")
+
+p_fsh_total_dose <- df %>%
+  filter(FSH_total_dose > 0) %>%
+  ggplot(aes(x = FSH_total_dose)) +
+  geom_histogram(
+    binwidth = 500,
+    boundary = 0,
+    fill = "#4682B4",
+    colour = "white"
+  ) +
+  theme_classic() +
+  labs(
+    title = "B",
+    x = "Total FSH dose (IU)",
+    y = "Frequency"
+  )
+
+
+p_hmg_start_dose <- df %>%
+  filter(hMG_initial_dose > 0) %>%
+  ggplot(aes(x = factor(hMG_initial_dose))) +
+  geom_bar(fill = "#4682B4", colour = "white") +
+  theme_classic() +
+  labs(
+    title = "A",
+    x = "Starting hMG dose (IU)",
+    y = "Frequency"
+  ) + labs(title = "C")
+
+p_hmg_total_dose <- df %>%
+  filter(hMG_total_dose > 0) %>%
+  ggplot(aes(x = hMG_total_dose)) +
+  geom_histogram(
+    binwidth = 500,
+    boundary = 0,
+    fill = "#4682B4",
+    colour = "white"
+  ) +
+  theme_classic() +
+  labs(
+    x = "Total hMG dose (IU)",
+    y = "Frequency"
+  ) + labs(title = "D")
+
+
+treatment_dist_plot2 <-
+  (p_fsh_start_dose | p_fsh_total_dose) /
+  (p_hmg_start_dose | p_hmg_total_dose)
+  
+treatment_dist_plot2
+```
+
+## Dose ~ Baseline variabes
+
+```{r, fig.width=8, fig.height=8}
+plot_dose_relationship <- function(data, xvar, yvar, xlab, ylab) {
+  ggplot(data, aes(x = {{ xvar }}, y = {{ yvar }})) +
+    geom_point(alpha = 1, size = 1.5, colour = "#4682B4") +
+    geom_smooth(method = "lm", se = FALSE, linewidth = 0.9, colour = "#C23B22") +
+    theme_classic() +
+    labs(
+      x = xlab,
+      y = ylab
+    ) +
+    theme(
+      axis.title = element_text(size = 11),
+      axis.text = element_text(size = 10)
+    )
+}
+
+p_dose_age <- plot_dose_relationship(
+  df,
+  Age,
+  Total_gonadotropin_dose,
+  "Age (years)",
+  "Total gonadotropin dose (IU)"
+) + labs(title = "A")
+
+p_dose_amh <- plot_dose_relationship(
+  df,
+  log_AMH,
+  Total_gonadotropin_dose,
+  "log1p(AMH)",
+  "Total gonadotropin dose (IU)"
+) + labs(title = "B")
+
+p_dose_foll <- plot_dose_relationship(
+  df,
+  log_follicles,
+  Total_gonadotropin_dose,
+  "log1p(Baseline follicle count)",
+  "Total gonadotropin dose (IU)"
+) + labs(title = "C")
+
+p_dose_age2 <- plot_dose_relationship(
+  df,
+  Age,
+  Starting_gonadotropin_dose,
+  "Age (years)",
+  "Starting gonadotropin dose (IU)"
+) + labs(title = "D")
+
+p_dose_amh2 <- plot_dose_relationship(
+  df,
+  log_AMH,
+  Starting_gonadotropin_dose,
+  "log1p(AMH)",
+  "Starting gonadotropin dose (IU)"
+) + labs(title = "E")
+
+p_dose_foll2 <- plot_dose_relationship(
+  df,
+  log_follicles,
+  Starting_gonadotropin_dose,
+  "log1p(Baseline follicle count)",
+  "Starting gonadotropin dose (IU)"
+) + labs(title = "F")
+
+
+row1 <- p_dose_age | p_dose_amh | p_dose_foll
+row2 <- p_dose_age2 | p_dose_amh2 | p_dose_foll2
+
+dose_baseline_plot <-
+  row1 / row2 +
+  plot_layout(heights = c(1, 1)) +
+  plot_annotation()
+
+dose_baseline_plot
+```
+## Dose and MII 
+```{r}
+plot_dose_mii <- function(data, xvar, xlab) {
+  ggplot(data, aes(x = {{ xvar }}, y = No_mature_eggs)) +
+    geom_jitter(
+      width = 0,
+      height = 0.25,
+      alpha = 0.75,
+      size = 2,
+      colour = "#4682B4"
+    ) +
+    geom_smooth(
+      method = "lm",
+      se = FALSE,
+      linewidth = 0.9,
+      colour = "#D7301F"
+    ) +
+    theme_classic() +
+    labs(
+      x = xlab,
+      y = "MII oocyte count"
+    ) +
+    theme(
+      axis.title = element_text(size = 10),
+      axis.text = element_text(size = 9),
+      plot.tag = element_text(face = "bold", size = 13)
+    )
+}
+
+p_total_gonad_mii <- plot_dose_mii(
+  df,
+  Total_gonadotropin_dose,
+  "Total gonadotropin dose (IU)"
+)
+
+p_start_gonad_mii <- plot_dose_mii(
+  df,
+  Starting_gonadotropin_dose,
+  "Starting gonadotropin dose (IU)"
+)
+
+dose_mii_plot <-
+  p_total_gonad_mii | p_start_gonad_mii +
+  plot_annotation(tag_levels = "A")
+
+dose_mii_plot
+```
+```{r}
+p_fsh_total_mii <- df %>%
+  filter(!is.na(FSH_total_dose), FSH_total_dose > 0) %>%
+  plot_dose_mii(
+    FSH_total_dose,
+    "Total FSH dose (IU)"
+  )
+
+p_hmg_total_mii <- df %>%
+  filter(!is.na(hMG_total_dose), hMG_total_dose > 0) %>%
+  plot_dose_mii(
+    hMG_total_dose,
+    "Total hMG dose (IU)"
+  )
+
+p_fsh_start_mii <- df %>%
+  filter(!is.na(FSH_initial_dose), FSH_initial_dose > 0) %>%
+  plot_dose_mii(
+    FSH_initial_dose,
+    "Starting FSH dose (IU)"
+  )
+
+p_hmg_start_mii <- df %>%
+  filter(!is.na(hMG_initial_dose), hMG_initial_dose > 0) %>%
+  plot_dose_mii(
+    hMG_initial_dose,
+    "Starting hMG dose (IU)"
+  )
+
+dose_mii_plot <-
+  (p_fsh_total_mii | p_hmg_total_mii) /
+  (p_fsh_start_mii | p_hmg_start_mii) +
+  plot_annotation(tag_levels = "A")
+
+dose_mii_plot
+```
+
+## Categorical Variables: Aetiology, Stimulation Protocol, Trigger Type
+
+```{r}
+p_mii_aetiology <- ggplot(df, aes(x = Aetiology_group, y = Total_gonadotropin_dose)) +
+  geom_boxplot(
+    width = 0.55,
+    fill = "#4682B4",
+    colour = "grey30",
+    outlier.shape = NA
+  ) +
+  geom_jitter(
+    width = 0.12,
+    alpha = 0.65,
+    size = 2,
+    colour = "grey25"
+  ) +
+  theme_classic() +
+  labs(
+    x = "Infertility aetiology group",
+    y = "Total Dose"
+  ) +
+  theme(
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11),
+    axis.title = element_text(size = 12)
+  )
+
+p_mii_aetiology
+```
+```{r}
+sessionInfo()
+packageVersion("here")
+packageVersion("tidyverse")
+packageVersion("dplyr")
+packageVersion("ggplot2")
+packageVersion("ggpubr")
+packageVersion("ggcorrplot")
+packageVersion("patchwork")
+```
+
+
