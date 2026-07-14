@@ -1,0 +1,465 @@
+---
+title: "Stats Tests"
+output: html_document
+date: "2026-06-08"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+library(ggsignif)
+library(FSA)
+library(here)
+here::here()
+
+df <- read_csv(
+  here("data", "processed", "shortprotocol_firstconsentedcycle.csv"),
+  name_repair = "minimal"
+)
+```
+
+## Manual change to dual trigger patient
+
+```{r}
+# 2313544U
+df[df$Unique_number == "2313544U", c("hCG_trigger_used", "GnRH_agonist_trigger_used", "hCG_trigger_dose_real","GnRH_agonist_trigger_dose_real")] <- 
+  list(1, 1, 250, 50)
+```
+
+##### ADD THIS TO DATA CLEANING
+```{r}
+df <- df %>%
+  mutate(
+    trigger_type = case_when(
+      GnRH_agonist_trigger_used == 1 & hCG_trigger_used == 1 ~ "Dual",
+      GnRH_agonist_trigger_used == 1 & hCG_trigger_used == 0 ~ "GnRH_agonist",
+      GnRH_agonist_trigger_used == 0 & hCG_trigger_used == 1 ~ "hCG",
+      TRUE ~ NA_character_
+    ),
+    trigger_type = factor(
+      trigger_type,
+      levels = c("hCG", "GnRH_agonist", "Dual")
+    )
+  )
+
+df <- df %>%
+  mutate(
+    Treatment_type = dplyr::recode(
+      Treatment_type,
+      "FSH_only" = "FSH only",
+      "hMG_only" = "hMG only",
+      "Dual" = "Dual"
+    ),
+    Treatment_type = factor(
+      Treatment_type,
+      levels = c("FSH only", "hMG only", "Dual")
+    )
+  )
+
+df <- df %>%
+  mutate(
+    trigger_group = case_when(
+      trigger_type == "hCG" ~ "hCG_only",
+      trigger_type %in% c("GnRH_agonist", "Dual") ~ "GnRH_agonist_containing",
+      TRUE ~ NA_character_
+    ),
+    trigger_group = factor(
+      trigger_group,
+      levels = c("hCG_only", "GnRH_agonist_containing")
+    )
+  )
+```
+
+
+```{r}
+table(df$Treatment_type) #FSH = 32, hMG = 10, Dual = 19
+table(df$Aetiology_group) #Female factor = 15, No female factor = 30, Unexplained = 16
+table(df$trigger_type) #hCG = 30, GnRH agonist = 25, Dual = 1
+```
+
+```{r}
+vars_to_summarise <- c(
+  "Age",
+  "Baseline_AMH",
+  "Baseline_total_follicles",
+  "BMI",
+  "Baseline_endometrium",
+  "Final_follicles_lessthan_11.9",
+  "No_mature_eggs",
+  "Starting_gonadotropin_dose",
+  "Total_gonadotropin_dose",
+  "GnRH_antagonist_total_dose"
+)
+
+treatment_summary <- df %>%
+  group_by(Treatment_type) %>%
+  summarise(
+    n = n(),
+    across(
+      all_of(vars_to_summarise),
+      list(
+        mean = ~mean(.x, na.rm = TRUE),
+        sd = ~sd(.x, na.rm = TRUE),
+        median = ~median(.x, na.rm = TRUE),
+        IQR = ~IQR(.x, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    )
+  )
+
+treatment_summary
+```
+
+## Treatment Type
+```{r}
+kruskal.test(Baseline_AMH ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 17.348, df = 2, p-value = 0.000171
+dunnTest(Baseline_AMH ~ Treatment_type, data = df, method = "bonferroni") # Dual - FSH only: Z=-3.532975, padj = 0.001232736, Dual - hMG only: Z=-3.342493, padj = 0.002490885	
+
+kruskal.test(Baseline_total_follicles ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 14.661, df = 2, p-value = 0.0006551
+dunnTest(Baseline_total_follicles ~ Treatment_type, data = df, method = "bonferroni") #Dual - FSH only: Z = -3.816666, padj = 0.0004058019
+
+kruskal.test(Age ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 4.8464, df = 2, p-value = 0.08864
+dunnTest(Age ~ Treatment_type, data = df, method = "bonferroni") #Dual - FSH only: Z = 2.1900137, padj =  0.08556973
+
+kruskal.test(BMI ~ Treatment_type, data = df) #Kruskal-Wallis chi-squared = 1.0195, df = 2, p-value = 0.6007
+
+kruskal.test(Baseline_endometrium ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 4.1349, df = 2, p-value = 0.1265
+
+kruskal.test(Final_follicles_lessthan_11.9 ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 13.184, df = 2, p-value = 0.001372
+dunnTest(Final_follicles_lessthan_11.9 ~ Treatment_type, data = df, method = "bonferroni") #Dual - FSH only: Z = -3.559113, padj = 0.001116329
+
+kruskal.test(No_mature_eggs ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 13.376, df = 2, p-value = 0.001246
+dunnTest(No_mature_eggs ~ Treatment_type, data = df, method = "bonferroni") # Dual - FSH only: Z = -3.591086, padj = 0.0009879069	
+
+kruskal.test(Starting_gonadotropin_dose ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 24.935, df = 2, p-value = 3.85e-06 
+dunnTest(Starting_gonadotropin_dose ~ Treatment_type, data = df, method = "bonferroni") # Dual - FSH only: Z = 4.9912114, padj = 1.800058e-06, Dual - hMG only: Z = 2.455467, padj = 4.221045e-02
+
+kruskal.test(Total_gonadotropin_dose ~ Treatment_type, data = df) # Kruskal-Wallis chi-squared = 26.15, df = 2, p-value = 2.097e-06
+dunnTest(Total_gonadotropin_dose ~ Treatment_type, data = df, method = "bonferroni") # Dual - FSH only Z = 5.0140151, padj = 1.599174e-06, Dual - hMG only: Z = 3.2219140, padj = 3.820121e-03
+
+kruskal.test(GnRH_antagonist_total_dose ~ Treatment_type, data = df) #Kruskal-Wallis chi-squared = 5.3455, df = 2, p-value = 0.06906
+```
+
+## Aetiology infertility group
+```{r}
+kruskal.test(No_mature_eggs ~ Aetiology_group, data = df) #Kruskal-Wallis chi-squared = 4.3041, df = 2, p-value = 0.1162 NON SIG
+
+kruskal.test(Baseline_AMH ~ Aetiology_group, data = df) #Kruskal-Wallis chi-squared = 0.23433, df = 2, p-value = 0.8894 NON SIG
+
+kruskal.test(Age ~ Aetiology_group, data = df) #Kruskal-Wallis chi-squared = 2.7317, df = 2, p-value = 0.2552 NON SIG
+
+kruskal.test(Baseline_total_follicles ~ Aetiology_group, data = df) # Kruskal-Wallis chi-squared = 0.096615, df = 2, p-value = 0.9528 NON SIG
+
+kruskal.test(Starting_gonadotropin_dose ~ Aetiology_group, data = df) # Kruskal-Wallis chi-squared = 0.3845, df = 2, p-value = 0.8251 NON SIG
+
+kruskal.test(Baseline_endometrium ~ Aetiology_group, data = df) #Kruskal-Wallis chi-squared = 1.2656, df = 2, p-value = 0.5311 NON SIG
+
+kruskal.test(BMI ~ Aetiology_group, data = df) # Kruskal-Wallis chi-squared = 0.2673, df = 2, p-value = 0.8749 NON SIG
+```
+
+
+##Categorical Fisher's exact tests
+```{r}
+aetiology_protocol <- table(
+  df$Aetiology_group,
+  df$Treatment_type
+)
+
+aetiology_protocol
+
+fisher.test(aetiology_protocol)
+```
+```{r}
+stim_trigger <- table(
+  df$Treatment_type,
+  df$trigger_group
+)
+
+stim_trigger
+fisher.test(stim_trigger)
+```
+```{r}
+aetiology_trigger <- table(
+  df$Aetiology_group,
+  df$trigger_group
+)
+aetiology_trigger
+fisher.test(aetiology_trigger)
+```
+
+
+```{r}
+plot(No_mature_eggs ~ GnRH_antagonist_total_dose, data = df)
+```
+
+```{r}
+packageVersion("FSA")
+packageVersion("ggsignif")
+```
+
+```{r}
+ymax_amh <- max(df$Baseline_AMH, na.rm = TRUE)
+
+p_amh <- ggplot(df, aes(x = Treatment_type, y = Baseline_AMH, fill = Treatment_type)) +
+  geom_boxplot(
+    width = 0.6,
+    alpha = 0.65,
+    outlier.shape = NA,
+    colour = "black",
+    linewidth = 0.4
+  ) +
+  geom_jitter(
+    width = 0.08,
+    size = 1,
+    alpha = 0.7,
+    colour = "black"
+  ) +
+
+  # FSH only vs Dual bracket
+  geom_segment(aes(x = 1, xend = 3, y = ymax_amh * 1.08, yend = ymax_amh * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 1, xend = 1, y = ymax_amh * 1.05, yend = ymax_amh * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 3, xend = 3, y = ymax_amh * 1.05, yend = ymax_amh * 1.08),
+               inherit.aes = FALSE) +
+  annotate("text", x = 2, y = ymax_amh * 1.11, label = "** p = 0.0012", size = 5) +
+
+  # hMG only vs Dual bracket
+  geom_segment(aes(x = 2, xend = 3, y = ymax_amh * 1.20, yend = ymax_amh * 1.20),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 2, xend = 2, y = ymax_amh * 1.17, yend = ymax_amh * 1.20),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 3, xend = 3, y = ymax_amh * 1.17, yend = ymax_amh * 1.20),
+               inherit.aes = FALSE) +
+  annotate("text", x = 2.5, y = ymax_amh * 1.23, label = "** 0.0025", size = 5) +
+
+  scale_fill_manual(values = c(
+    "FSH only" = "#2297E6",
+    "hMG only" = "#28E2E5",
+    "Dual" = "#CD0BBC"
+  )) +
+  labs(
+  #  title = "Baseline AMH by Stimulation Regimen",
+    x = "Stimulation regimen",
+    y = "Baseline AMH (pmol/L)"
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    axis.title = element_text(face = "bold", size = 20),
+    axis.text = element_text(size = 18),
+    legend.position = "none"
+  ) +
+  coord_cartesian(ylim = c(0, ymax_amh * 1.3))
+
+p_amh
+
+ggsave("amh_stim.png", p_amh, dpi = 600)
+```
+
+
+```{r}
+ymax_mii <- max(df$No_mature_eggs, na.rm = TRUE)
+
+p_mii <- ggplot(df, aes(x = Treatment_type, y = No_mature_eggs, fill = Treatment_type)) +
+  geom_boxplot(
+    width = 0.6,
+    alpha = 0.65,
+    outlier.shape = NA,
+    colour = "black",
+    linewidth = 0.4
+  ) +
+  geom_jitter(
+    width = 0.08,
+    size = 1,
+    alpha = 0.7,
+    colour = "black"
+  ) +
+
+  # FSH only vs Dual bracket
+  geom_segment(aes(x = 1, xend = 3, y = ymax_mii * 1.08, yend = ymax_mii * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 1, xend = 1, y = ymax_mii * 1.05, yend = ymax_mii * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 3, xend = 3, y = ymax_mii * 1.05, yend = ymax_mii * 1.08),
+               inherit.aes = FALSE) +
+  annotate("text", x = 2, y = ymax_mii * 1.11, label = "*** p = 0.0001", size = 5) +
+
+  scale_fill_manual(values = c(
+    "FSH only" = "#2297E6",
+    "hMG only" = "#28E2E5",
+    "Dual" = "#CD0BBC"
+  )) +
+  labs(
+  #  title = "MII Oocytes by Stimulation Regimen",
+    x = "Stimulation regimen",
+    y = "Number of MII Oocytes"
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    axis.title = element_text(face = "bold", size = 20),
+    axis.text = element_text(size = 18),
+    legend.position = "none"
+  ) +
+  coord_cartesian(ylim = c(0, ymax_mii * 1.3))
+
+p_mii
+
+ggsave("mii_stim.png", p_mii, width = 10, height = 6, dpi = 600)
+```
+
+
+```{r}
+ymax_totaldose <- max(df$Total_gonadotropin_dose, na.rm = TRUE)
+
+p_totaldose <- ggplot(df, aes(x = Treatment_type, y = Total_gonadotropin_dose, fill = Treatment_type)) +
+  geom_boxplot(
+    width = 0.6,
+    alpha = 0.65,
+    outlier.shape = NA,
+    colour = "black",
+    linewidth = 0.4
+  ) +
+  geom_jitter(
+    width = 0.08,
+    size = 1,
+    alpha = 0.7,
+    colour = "black"
+  ) +
+
+  # FSH only vs Dual bracket
+  geom_segment(aes(x = 1, xend = 3, y = ymax_totaldose * 1.08, yend = ymax_totaldose * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 1, xend = 1, y = ymax_totaldose * 1.05, yend = ymax_totaldose * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 3, xend = 3, y = ymax_totaldose * 1.05, yend = ymax_totaldose * 1.08),
+               inherit.aes = FALSE) +
+  annotate("text", x = 2, y = ymax_totaldose * 1.11, label = "*** p < 0.0001", size = 5) +
+
+  # hMG only vs Dual bracket
+  geom_segment(aes(x = 2, xend = 3, y = ymax_totaldose * 1.20, yend = ymax_totaldose * 1.20),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 2, xend = 2, y = ymax_totaldose * 1.17, yend = ymax_totaldose * 1.20),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 3, xend = 3, y = ymax_totaldose * 1.17, yend = ymax_totaldose * 1.20),
+               inherit.aes = FALSE) +
+  annotate("text", x = 2.5, y = ymax_totaldose * 1.23, label = "** 0.003", size = 5) +
+
+  scale_fill_manual(values = c(
+    "FSH only" = "#2297E6",
+    "hMG only" = "#28E2E5",
+    "Dual" = "#CD0BBC"
+  )) +
+  labs(
+  #  title = "Baseline AMH by Stimulation Regimen",
+    x = "Stimulation regimen",
+    y = "Total gonadotropin dose (iu)"
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    axis.title = element_text(face = "bold", size = 20),
+    axis.text = element_text(size = 18),
+    legend.position = "none"
+  ) +
+  coord_cartesian(ylim = c(0, ymax_totaldose * 1.3))
+
+p_totaldose
+
+ggsave("totaldose_stim.png", p_totaldose, dpi = 600)
+```
+
+```{r}
+ymax_age <- max(df$Age, na.rm = TRUE)
+
+p_age <- ggplot(df, aes(x = Treatment_type, y = Age, fill = Treatment_type)) +
+  geom_boxplot(
+    width = 0.6,
+    alpha = 0.65,
+    outlier.shape = NA,
+    colour = "black",
+    linewidth = 0.4
+  ) +
+  geom_jitter(
+    width = 0.08,
+    size = 1,
+    alpha = 0.7,
+    colour = "black"
+  ) +
+
+  # FSH only vs Dual bracket
+  geom_segment(aes(x = 1, xend = 3, y = ymax_age * 1.08, yend = ymax_age * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 1, xend = 1, y = ymax_age * 1.05, yend = ymax_age * 1.08),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 3, xend = 3, y = ymax_age * 1.05, yend = ymax_age * 1.08),
+               inherit.aes = FALSE) +
+  annotate("text", x = 2, y = ymax_age * 1.11, label = "*** p < 0.0001", size = 4) +
+
+  # hMG only vs Dual bracket
+  geom_segment(aes(x = 2, xend = 3, y = ymax_age * 1.20, yend = ymax_age * 1.20),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 2, xend = 2, y = ymax_age * 1.17, yend = ymax_age * 1.20),
+               inherit.aes = FALSE) +
+  geom_segment(aes(x = 3, xend = 3, y = ymax_age * 1.17, yend = ymax_age * 1.20),
+               inherit.aes = FALSE) +
+  annotate("text", x = 2.5, y = ymax_age * 1.23, label = "** 0.003", size = 4) +
+
+  scale_fill_manual(values = c(
+    "FSH only" = "#2297E6",
+    "hMG only" = "#28E2E5",
+    "Dual" = "#CD0BBC"
+  )) +
+  labs(
+  #  title = "Baseline AMH by Stimulation Regimen",
+    x = "Stimulation regimen",
+    y = "Age (years)"
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20),
+    axis.title = element_text(face = "bold", size = 12),
+    axis.text = element_text(size = 13),
+    legend.position = "none"
+  ) +
+  coord_cartesian(ylim = c(0, ymax_age * 1.3))
+
+p_age
+
+ggsave("age_stim.png", p_age, dpi = 600)
+```
+
+
+```{r}
+p_startdose
+```
+
+## Aetiology
+```{r}
+df %>%
+  group_by(Aetiology_group) %>%
+  summarise(
+    n = n(),
+    mean_age = mean(Age, na.rm = TRUE),
+    sd_age = sd(Age, na.rm = TRUE),
+    median_age = median(Age, na.rm = TRUE),
+    IQR_age = IQR(Age, na.rm = TRUE)
+  )
+```
+
+```{r}
+df %>%
+  group_by(Aetiology_group) %>%
+  summarise(
+    n = n(),
+    mean = mean(No_mature_eggs, na.rm = TRUE),
+    sd = sd(No_mature_eggs, na.rm = TRUE),
+    median = median(No_mature_eggs, na.rm = TRUE),
+    IQR = IQR(No_mature_eggs, na.rm = TRUE)
+  )
+```
+
