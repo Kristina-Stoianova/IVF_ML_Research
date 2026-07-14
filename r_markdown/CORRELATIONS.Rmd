@@ -1,0 +1,718 @@
+---
+title: "Distributions and Descriptive Stats"
+output: html_document
+date: "2026-04-27"
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(ggcorrplot)
+library(patchwork)
+library(corrplot)
+
+library(here)
+here::here()
+
+shortdata <- read_csv(
+  here("data", "processed", "shortprotocol_firstconsentedcycle.csv"),
+  name_repair = "minimal"
+)
+```
+
+# Structural zeros:
+# If a medication was not used, the dose/duration value is not a true biological 0
+# It should be treated as NA in the exposed-only variable
+
+```{r}
+make_real_vars <- function(data, used_col, value_cols) {
+  
+  used_col <- enquo(used_col)
+  
+  data %>%
+    mutate(
+      across(
+        all_of(value_cols),
+        ~ if_else(!!used_col == 1, .x, NA_real_),
+        .names = "{.col}_real"
+      )
+    )
+}
+
+FSH_vars <- c(
+  "FSH_initial_dose",
+  "FSH_total_dose",
+  "FSH_final_dose",
+  "FSH_min_dose",
+  "FSH_max_dose",
+  "FSH_duration",
+  "FSH_dose_changes",
+  "FSH_avg_daily"
+)
+
+hMG_vars <- c(
+  "hMG_initial_dose",
+  "hMG_total_dose",
+  "hMG_final_dose",
+  "hMG_min_dose",
+  "hMG_max_dose",
+  "hMG_duration",
+  "hMG_dose_changes",
+  "hMG_avg_daily"
+)
+
+shortdata <- shortdata %>%
+  make_real_vars(FSH_used, FSH_vars) %>%
+  make_real_vars(hMG_used, hMG_vars) %>%
+  make_real_vars(hCG_trigger_used, "hCG_trigger_dose") %>%
+  make_real_vars(GnRH_agonist_trigger_used, "GnRH_agonist_trigger_dose")
+
+shortdata <- shortdata %>%
+  mutate(
+    FSH_only = if_else(Treatment_type == "FSH_only", 1, 0),
+    hMG_only = if_else(Treatment_type == "hMG_only", 1, 0),
+    Dual     = if_else(Treatment_type == "Dual", 1, 0)
+  )
+```
+
+## Manual change to dual trigger patient
+
+```{r}
+# 2313544U
+shortdata[shortdata$Unique_number == "2313544U", c("hCG_trigger_used", "GnRH_agonist_trigger_used", "hCG_trigger_dose_real","GnRH_agonist_trigger_dose_real")] <- 
+  list(1, 1, 250, 50)
+```
+
+## Pre function dealing with structural 0s
+
+```{r}
+##initial dose
+shortdata <- shortdata %>%
+  mutate(
+    FSH_initial_dose_real = if_else(FSH_used == 1, FSH_initial_dose, NA_real_),
+    hMG_initial_dose_real = if_else(hMG_used == 1, hMG_initial_dose, NA_real_)
+  )
+
+## total dose
+shortdata <- shortdata %>%
+  mutate(
+    FSH_total_dose_real = if_else(FSH_used == 1, FSH_total_dose, NA_real_),
+    hMG_total_dose_real = if_else(hMG_used == 1, hMG_total_dose, NA_real_)
+  )
+
+shortdata <- shortdata %>%
+  mutate(
+    # Final dose
+    FSH_final_dose_real = if_else(FSH_used == 1, FSH_final_dose, NA_real_),
+    hMG_final_dose_real = if_else(hMG_used == 1, hMG_final_dose, NA_real_),
+    # Minimum dose
+    FSH_min_dose_real = if_else(FSH_used == 1, FSH_min_dose, NA_real_),
+    hMG_min_dose_real = if_else(hMG_used == 1, hMG_min_dose, NA_real_),
+    # Maximum dose
+    FSH_max_dose_real = if_else(FSH_used == 1, FSH_max_dose, NA_real_),
+    hMG_max_dose_real = if_else(hMG_used == 1, hMG_max_dose, NA_real_),
+    # Duration
+    FSH_duration_real = if_else(FSH_used == 1, FSH_duration, NA_real_),
+    hMG_duration_real = if_else(hMG_used == 1, hMG_duration, NA_real_),
+    # Dose changes
+    FSH_dose_changes_real = if_else(FSH_used == 1, FSH_dose_changes, NA_real_),
+    hMG_dose_changes_real = if_else(hMG_used == 1, hMG_dose_changes, NA_real_),
+    # Average daily dose
+    FSH_avg_daily_real = if_else(FSH_used == 1, FSH_avg_daily, NA_real_),
+    hMG_avg_daily_real = if_else(hMG_used == 1, hMG_avg_daily, NA_real_)
+  )
+
+shortdata <- shortdata %>%
+  mutate(
+    hCG_trigger_dose_real = if_else(hCG_trigger_used == 1, hCG_trigger_dose, NA_real_),
+    GnRH_trigger_dose_real = if_else(GnRH_agonist_trigger_used == 1, GnRH_agonist_trigger_dose, NA_real_)
+  )
+```
+
+## Descriptive Stats
+
+```{r}
+descriptive_stats <- function(data, vars) {
+  
+  data %>%
+    select(all_of(vars)) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "Variable",
+      values_to = "Value"
+    ) %>%
+    group_by(Variable) %>%
+    summarise(
+      n_available = sum(!is.na(Value)),
+      missing_n = sum(is.na(Value)),
+      missing_percent = round(100 * missing_n / n(), 1),
+      mean = round(mean(Value, na.rm = TRUE), 2),
+      SD = round(sd(Value, na.rm = TRUE), 2),
+      median = round(median(Value, na.rm = TRUE), 2),
+      Q1 = round(quantile(Value, 0.25, na.rm = TRUE), 2),
+      Q3 = round(quantile(Value, 0.75, na.rm = TRUE), 2),
+      IQR = round(IQR(Value, na.rm = TRUE), 2),
+      min = round(min(Value, na.rm = TRUE), 2),
+      max = round(max(Value, na.rm = TRUE), 2),
+      .groups = "drop"
+    )
+}
+
+vars_to_summarise <- c(
+  "Age", "BMI", "Baseline_AMH", "Baseline_total_follicles", "Baseline_endometrium", "FSH_initial_dose_exposed", "hMG_initial_dose_exposed", "Total_gonadotropin_dose", "Starting_gonadotropin_dose", "GnRH_antagonist_total_dose", "GnRH_antagonist_duration", "Final_total_follicles", "Final_follicles_lessthan_11.9", "Final_endometrium_ec", "GnRH_trigger_dose_exposed", "hCG_trigger_dose_exposed", "No_eggs", "No_mature_eggs", "No_fertilised"
+)
+
+summary_table <- descriptive_stats(shortdata, vars_to_summarise)
+summary_table
+```
+
+### CORRELATION MATRICES
+
+## Names to go on correlation matrices for tidy look
+```{r}
+pretty_label_map <- c(
+  "Age" = "Age",
+  "BMI" = "BMI",
+  "Baseline_AMH" = "Baseline AMH",
+  "Baseline_total_follicles" = "Baseline follicles",
+  "Baseline_endometrium" = "Baseline endometrium",
+  
+  # Overall stimulation variables
+  "FSH_used" = "FSH used",
+  "hMG_used" = "hMG used",
+  "Starting_gonadotropin_dose" = "Starting gonadotropin dose",
+  "Total_gonadotropin_dose" = "Total gonadotropin dose",
+  
+  # FSH variables
+  "FSH_initial_dose_real" = "FSH starting dose",
+  "FSH_total_dose_real" = "Total FSH dose",
+  "FSH_final_dose_real" = "FSH final dose",
+  "FSH_min_dose_real" = "FSH min dose",
+  "FSH_max_dose_real" = "FSH max dose",
+  "FSH_duration_real" = "FSH duration",
+  "FSH_dose_changes_real" = "FSH dose changes",
+  "FSH_avg_daily_real" = "Mean daily FSH dose",
+  
+  # hMG variables
+  "hMG_initial_dose_real" = "hMG starting dose",
+  "hMG_total_dose_real" = "Total hMG dose",
+  "hMG_final_dose_real" = "hMG final dose",
+  "hMG_min_dose_real" = "hMG minimum dose",
+  "hMG_max_dose_real" = "hMG maximum dose",
+  "hMG_duration_real" = "hMG duration",
+  "hMG_dose_changes_real" = "hMG dose changes",
+  "hMG_avg_daily_real" = "Mean daily hMG dose",
+  
+  "FSH_only" = "FSH only",
+  "hMG_only" = "hMG only",
+  "Dual" = "Dual",
+  
+  ## GnRH antagonist
+  "GnRH_antagonist_total_dose" = "GnRH antagonist total dose",
+  "GnRH_antagonist_duration" = "GnRH antagonist duration",
+  
+  "Last_day_of_stim" = "Duration of stim",
+  
+  ## Trigger
+  "hCG_trigger_dose_real" = "hCG trigger dose",
+  "GnRH_agonist_trigger_dose_real" = "GnRH agonist trigger dose",
+  
+  ## Male
+  
+  "Pre_wash_sperm_conc" = "Pre wash sperm conc.",
+  "Pre_wash_sperm_motility" = "Pre wash sperm motility",
+  "Pre_wash_normal_sperm_morphology" = "Pre wash normal sperm morph",
+  "Post_wash_sperm_conc" = "Post wash sperm conc",
+  "Post_wash_sperm_motility" = "Post wash sperm motility",
+  "Semen_vol" = "Semen vol",
+  
+  # Outcomes
+  "No_eggs" = "Total oocytes",
+  "No_mature_eggs" = "MII oocytes",
+  "No_fertilised" = "Fertilised oocytes",
+  "Fertilisation_rate" = "Fertilisation rate",
+  "Proportion_mature" = "Proportion mature",
+  
+  #
+  "Final_follicles_lessthan_11.9" = "Final follicles\n<11.9mm",
+  "Final_total_follicles" = "Final follicles",
+  "Final_endometrium_ec" = "Final endometrium"
+)
+
+apply_pretty_names <- function(corr_matrix, label_map = pretty_label_map) {
+  original_names <- colnames(corr_matrix)
+  pretty_names <- ifelse(
+    original_names %in% names(label_map),
+    label_map[original_names],
+    gsub("_", " ", original_names)
+  )
+  colnames(corr_matrix) <- pretty_names
+  rownames(corr_matrix) <- pretty_names
+  return(corr_matrix)
+}
+```
+
+## CORRELATIONS
+
+## 1. Baseline ~ Outcome
+```{r, fig.width=6, fig.height=7}
+corr_vars1 <- c("Age", "BMI", "Baseline_AMH", "Baseline_total_follicles", "Baseline_endometrium", "No_mature_eggs")
+
+corr_data1 <- shortdata %>%
+  dplyr::select(all_of(corr_vars1))
+
+corr_matrix1 <- cor(
+  corr_data1,
+  use = "pairwise.complete.obs",
+  method = "spearman"
+)
+
+corr_matrix1_pretty <- apply_pretty_names(corr_matrix1)
+
+corrplot1 <- corrplot(
+  corr_matrix1_pretty,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  col = colorRampPalette(c("blue", "white", "red"))(200),
+  addCoef.col = "black",
+  number.cex = 0.7,
+  tl.cex = 0.8,
+  tl.col = "black",
+  diag = FALSE
+)
+
+corrplot1 <- ggcorrplot(
+  corr_matrix1_pretty,
+  type = "lower",
+  lab = TRUE,
+  lab_size = 5,
+  hc.order = TRUE,
+  hc.method = "ward.D2",
+  colors = c("#2166AC", "white", "#D6604D"),
+  ggtheme = theme_void()
+) +
+  scale_fill_gradientn(
+    colours = c("#2166AC", "white", "#D6604D"),
+    limits = c(-1, 1),
+    name = "Spearman r"
+  ) +
+  #labs(
+   # title = "Baseline and Oocyte Variables"
+  #) +
+  theme(
+    plot.title = element_text(
+      size = 20,
+      face = "bold",
+      hjust = 0.5
+    ),
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1,
+      size = 16,
+      #face = "bold",
+      colour = "black"
+    ),
+    axis.text.y = element_text(
+      size = 20,
+      #face = "bold",
+      colour = "black"
+    ),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+corrplot1
+
+ggsave(
+  "corrplot1.png",
+  plot = corrplot1,
+  #width = 16,
+ # height = 9.5,
+ # units = "cm",
+  bg = "white"
+)
+
+
+ggsave("corrplot1.png", corrplot1, dpi = 600)
+```
+
+## 2. Baseline ~ Protocol Decisions
+
+```{r, fig.width=12, fig.height=8}
+corr_vars2 <- c("Starting_gonadotropin_dose", "Total_gonadotropin_dose",
+  "FSH_initial_dose_real",
+  "FSH_total_dose_real",
+  "FSH_final_dose_real",
+  "FSH_min_dose_real",
+  "FSH_max_dose_real",
+  "FSH_duration_real",
+  "FSH_avg_daily_real",
+  "hMG_initial_dose_real",
+  "hMG_total_dose_real",
+  "hMG_final_dose_real",
+  "hMG_min_dose_real",
+  "hMG_max_dose_real",
+  "hMG_duration_real",
+  "hMG_avg_daily_real",
+  "Last_day_of_stim",
+  "Final_total_follicles",
+  "Final_follicles_lessthan_11.9",
+  "No_eggs",
+  "No_mature_eggs"
+)
+
+##little variation in trigger doses so exclude
+##exclude FSH dose change as not many
+
+corr_data2 <- shortdata %>%
+  dplyr::select(all_of(corr_vars2))
+
+## remove columns with too few variations
+corr_data2_clean <- corr_data2 %>%
+  dplyr::select(where(~ sum(!is.na(.)) >= 3)) %>%
+  dplyr::select(where(~ n_distinct(., na.rm = TRUE) > 1))
+
+corr_matrix2 <- cor(
+  corr_data2_clean,
+  use = "pairwise.complete.obs",
+  method = "spearman"
+)
+
+corr_matrix2 <- cor(
+  corr_data2,
+  use = "pairwise.complete.obs",
+  method = "spearman"
+)
+
+corr_matrix2_pretty <- apply_pretty_names(corr_matrix2)
+
+corrplot(
+  corr_matrix2_pretty,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  col = colorRampPalette(c("blue", "white", "red"))(200),
+  #addCoef.col = "black",
+  number.cex = 0.5,
+  tl.cex = 0.8,
+  tl.col = "black",
+  diag = FALSE
+)
+
+corrplot2 <- ggcorrplot(
+  corr_matrix2_pretty,
+  type = "lower",
+  #lab = TRUE,
+  lab_size = 3.5,
+  hc.order = TRUE,
+  hc.method = "ward.D2",
+  colors = c("#2166AC", "white", "#D6604D"),
+  ggtheme = theme_void()
+) +
+  scale_fill_gradientn(
+    colours = c("#2166AC", "white", "#D6604D"),
+    limits = c(-1, 1),
+    name = "Spearman r"
+  ) +
+  #labs(
+  #  title = "Baseline, Stimulation, Oocyte Variables"
+ # ) +
+  theme(
+    plot.title = element_text(
+      size = 16,
+      face = "bold",
+      hjust = 0.5
+    ),
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1,
+      size = 8,
+      colour = "black"
+    ),
+    axis.text.y = element_text(
+      size = 8,
+      colour = "black"
+    ),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 9.5),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+corrplot2
+
+ggsave("corrplot2.png", corrplot2, dpi = 600)
+```
+
+## Main correlation matrix - atfter reducing some dosing features
+
+```{r, fig.width=10, fig.height=9}
+corr_vars3 <- c(
+  "Age",
+  "BMI",
+  "Baseline_AMH",
+  "Baseline_total_follicles",
+  "Baseline_endometrium",
+  "FSH_only",
+  #"FSH_initial_dose",
+  "hMG_only",
+  #"hMG_initial_dose",
+  "Dual",
+  "Starting_gonadotropin_dose",
+  "Total_gonadotropin_dose",
+  "GnRH_antagonist_total_dose",
+  "hCG_trigger_used",
+  "GnRH_agonist_trigger_used",
+  "Last_day_of_stim",
+  "No_mature_eggs"
+)
+
+corr_data3 <- shortdata %>%
+  dplyr::select(all_of(corr_vars3))
+
+corr_matrix3 <- cor(
+  corr_data3,
+  use = "pairwise.complete.obs",
+  method = "spearman"
+)
+
+corr_matrix3_pretty <- apply_pretty_names(corr_matrix3)
+
+corrplot3 <- corrplot(
+  corr_matrix3_pretty,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  col = colorRampPalette(c("blue", "white", "red"))(200),
+  addCoef.col = "black",
+  number.cex = 0.8,
+  tl.cex = 0.9,
+  tl.col = "black",
+  diag = FALSE
+)
+
+corrplot3 <- ggcorrplot(
+  corr_matrix3_pretty,
+  type = "lower",
+  lab = TRUE,
+  lab_size = 2.5,
+  hc.order = TRUE,
+  hc.method = "ward.D2",
+  colors = c("#2166AC", "white", "#D6604D"),
+  ggtheme = theme_void()
+) +
+  scale_fill_gradientn(
+    colours = c("#2166AC", "white", "#D6604D"),
+    limits = c(-1, 1),
+    name = "Spearman r"
+  ) +
+  #labs(
+  #  title = "Baseline, Stimulation, Oocyte Variables"
+ # ) +
+  theme(
+    plot.title = element_text(
+      size = 14,
+      face = "bold",
+      hjust = 0.5
+    ),
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1,
+      size = 11,
+      #face = "bold",
+      colour = "black"
+    ),
+    axis.text.y = element_text(
+      size = 11,
+      #face = "bold",
+      colour = "black"
+    ),
+    legend.title = element_text(size = 9.5),
+    legend.text = element_text(size = 10),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+corrplot3
+
+ggsave("corrplot3.png", corrplot3, dpi = 600)
+```
+
+```{r, fig.width=12, fig.height=10}
+corr_combined <- corrplot1 / corrplot3
+corr_combined
+```
+
+## Male correlation matrix
+
+```{r}
+corr_vars_male <- c(
+  "Pre_wash_sperm_conc",
+  "Pre_wash_sperm_motility",
+  "Pre_wash_normal_sperm_morphology",
+  "Post_wash_sperm_conc",
+  "Post_wash_sperm_motility",
+  "Semen_vol",
+  "No_fertilised",
+  "Fertilisation_rate"
+)
+
+corr_data_male <- shortdata %>%
+  dplyr::select(all_of(corr_vars_male))
+
+corr_matrix_male <- cor(
+  corr_data_male,
+  use = "pairwise.complete.obs",
+  method = "spearman"
+)
+
+corr_matrix_male_pretty <- apply_pretty_names(corr_matrix_male)
+
+corrplot(
+  corr_matrix_male_pretty,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  col = colorRampPalette(c("blue", "white", "red"))(200),
+  addCoef.col = "black",
+  number.cex = 0.8,
+  tl.cex = 0.9,
+  tl.col = "black",
+  diag = FALSE
+)
+```
+
+## To make correlation function later
+
+```{r}
+make_corr_matrix <- function(data, vars, method = "spearman") {
+  
+  corr_data <- data %>%
+  corr_matrix <- cor(
+    corr_data,
+    use = "pairwise.complete.obs",
+    method = method
+  )
+  }
+  
+  return(corr_matrix)
+```
+
+
+```{r}
+corr_matrix_fsh <- make_corr_matrix(shortdata, corr_vars_fsh)
+corr_matrix_hmg <- make_corr_matrix(shortdata, corr_vars_hmg)
+corr_matrix_fsh_hmg <- make_corr_matrix(shortdata, corr_vars_fsh_hmg)
+corr_matrix3 <- make_corr_matrix(shortdata, corr_vars3)
+```
+
+
+```{r}
+corrplot(
+  corr_matrix_fsh,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  col = colorRampPalette(c("#3B6EA8", "white", "#C44E52"))(200),
+  addCoef.col = "black",
+  number.cex = 0.6,
+  tl.cex = 0.8,
+  tl.col = "black",
+  tl.srt = 45,
+  diag = FALSE
+)
+```
+
+```{r}
+corr_data_male <- shortdata %>%
+  select(all_of(corr_vars_male))
+
+male_corr_matrix <- cor(
+  corr_data_male,
+  use = "pairwise.complete.obs",
+  method = "spearman"
+)
+
+male_corr_matrix_pretty <- apply_pretty_names(male_corr_matrix)
+
+corrplot(
+  male_corr_matrix_pretty,
+  method = "color",
+  type = "upper",
+  order = "hclust",
+  col = colorRampPalette(c("blue", "white", "red"))(200),
+  addCoef.col = "black",
+  number.cex = 0.8,
+  tl.cex = 0.9,
+  tl.col = "black",
+  diag = FALSE
+)
+```
+```{r}
+
+## Create dose bins
+shortdata <- shortdata %>%
+  mutate(dose_bin = cut(
+    Starting_gonadotropin_dose,
+    breaks = c(-Inf, 225, 350, Inf),
+    labels = c("150–225", "226–350", ">350"),
+    right = TRUE
+  ))
+
+
+# Compute correlation of MII with each dose bin (dummy-encoded) --> Spearman's 
+# Reshape to long format for heatmap
+cor_data <- shortdata %>%
+  mutate(
+    bin_150225 = as.numeric(dose_bin == "150–225"),
+    bin_226350 = as.numeric(dose_bin == "226–350"),
+    bin_gt350  = as.numeric(dose_bin == ">350")
+  ) %>%
+  summarise(
+    `150–225` = cor(No_mature_eggs, bin_150225, method = "spearman", use = "complete.obs"),
+    `226–350` = cor(No_mature_eggs, bin_226350, method = "spearman", use = "complete.obs"),
+    `>350`    = cor(No_mature_eggs, bin_gt350,  method = "spearman", use = "complete.obs")
+  ) %>%
+  tidyr::pivot_longer(everything(), names_to = "dose_bin", values_to = "correlation") %>%
+  mutate(variable = "MII")
+
+# Plot
+ggplot(cor_data, aes(x = dose_bin, y = variable, fill = correlation)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = round(correlation, 2)), size = 4, fontface = "bold") +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red",
+    midpoint = 0, limits = c(-1, 1), name = "Spearman r"
+  ) +
+  scale_x_discrete(limits = c("150–225", "226–350", ">350")) +
+  labs(
+    title = "Correlation: MII vs Starting Gonadotropin Doses",
+    x = "Starting gonadotropin dose (IU)",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text = element_text(size = 11),
+    panel.grid = element_blank(),
+    plot.title = element_text(face = "bold", size = 13)
+  )
+```
+
+
+
+## Sensitivity test --> without extreme AMH value (outlier), supplementary 
+```{r}
+shortdata1 <- shortdata %>%
+  filter(Unique_number !="8088599U")
+
+write.csv(
+  shortdata1,
+  here("data", "processed", "short_sensitivity.csv"),
+  row.names = FALSE
+)
+```
