@@ -14,7 +14,7 @@ There are 2 main pipelines in this project:
 
 ## Repository structure
 
-​```
+```
 ├─r_markdown/           # R data cleaning, preprocessing, and  statistical analysis notebooks (.Rmd)
 ├─processing_scripts/   # R helper functions required for data cleaning (sourced by the .Rmd file
 ├─modelling_scripts/    # Python screening, nested CV, final interpretation of SVR model
@@ -24,7 +24,7 @@ There are 2 main pipelines in this project:
 ├─data/                 
 ├── environment.yml       # Conda environment for the Python/HPC modelling
 └── renv.lock             # R package versions
-​```
+```
 
 ## Pipeline / run order
 
