@@ -1,17 +1,22 @@
 # Using Machine Learning to predict outcomes of Controlled Ovarian Stimulation (COS) in IVF/ICSI cycles
  -  Predicting the number of Metaphase II (MII) oocytes from Baseline Pre-treatment Clinical Variables
 
-## 1. An extensive data cleaning pipeline is developed to prepare clinical data for modelling
-## 2. A custom predictive modelling workflow is developed to predict the number of MII oocytes and identify top predictors
-  - 5 model families are evalauted: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
+# Project:
+
+## 1. Development of a data cleaning pipeline to standardise and prepare clinical data for modelling
+
+## 2. Development of a custom predictive modelling workflow to predict the number of MII oocytes and identify top predictors
+  - 5 model families are evaluated: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
   
 ## There are 2 main ML pipelines built in Python 3.12.13 using scikit-learn and xgboost:
 - Repeated k-fold cross-validation screening pipeline
    - Iteratively evaluates all possible predictor combinations
 - Nested cross-validation pipeline
-   - Used to separate model selection from evaluation and provide a less optimistic estimate of performance 
+   - Used to separate model selection from evaluation
+   - Provides a less optimistic estimate of performance 
+   - Allows predictor stability to be assessed
 
-> **Data availability:** the patient-level dataset is *not* included in this
+> **Data availability:** the patient dataset is *not* included in this repository
 
 ## Repository structure
 
@@ -40,29 +45,27 @@ IVF_ML_research/
 | Workflow step | Description |
 |---------------|-------------|
 | **1. Clean** | Run the cleaning notebook in `r_markdown/` (sources helper functions from `processing_scripts/`) to generate the clean dataset |
-| **2. Pre-processing, feature selection and exploratory analysis** | Missingness (`naniar`), Correlation (`ggcorrplot`), Exploratory modelling (`MASS`) |
+| **2. Pre-processing, feature selection and exploratory analysis** | Missingness (`naniar`), Correlation (`ggcorrplot`), Statistical analysis, Exploratory modelling (`MASS`) |
 | **3. ML modelling** | scikit-learn pipeline (iterative predictor screening --> nested CV --> SHAP interpretation) |
 
 
 ## Environment
 
-### Python ML modelling is performed on the HPC 
-### SVR interpretation can be run locally  
-#### In both cases conda enviornment captures package dependencies
+### Python ML modelling is performed on the HPC, SVR interpretation can be run locally  
+ - In both cases conda enviornment captures package dependencies
 
 ​```bash
 conda env create -f environment.yml
 conda activate ml_env
 ​```
 
-
+## Run modelling pipeline by submitted as batch job using bash script:
 ​```bash
 sbatch -p run_script.sh
 ​```
 
 ## Output of modelling 
-
 .csv results saved in `results/`; 
 figures in `figures/`.
 
-### The workflow is optimised for a small dataset
+### The workflow is optimised for a small dataset and addresses missing data with KNN imputation
