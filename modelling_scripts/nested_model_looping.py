@@ -1,22 +1,18 @@
-## Nested Cross-Validation — Exhaustive Predictor Screening
-## Corrected version of the original screening script
-## Fixes the train-then-evaluate leakage by moving hyperparameter tuning inside each outer fold so the outer test fold is never touched during tuning
-##
-## Logic:
-##   Outer loop (RepeatedKFold, 25 folds) — honest generalisation estimate
+## Nested Cross-Validation 
+## Moves hyperparameter tuning inside each outer fold so the outer test fold is never touched during tuning
+
+##   Outer loop (RepeatedKFold, 25 folds) 
 ##   Inner loop (KFold, 5 folds) — predictor combo selection + hyperparameter tuning
-##   Outer test fold touched exactly once, after selection is finalised
+##   Outer test fold untouched after selection is finalised
 ##
 ## Output:
-##   CSV with one row per outer fold — selected config, honest test metrics,
-##   overfitting diagnostics, and winning hyperparameters
+##   CSV with one row per outer fold 
 ##
 ## Usage:
 ##   Set MODEL_TO_RUN to one model family per run
 ##   Submit via HPC bash script with n_jobs set to available CPUs
 ##
-## Version Requirements:
-##   Python 3.11, scikit-learn, xgboost, numpy, pandas, scipy, tqdm
+
 
 import os
 import numpy as np
@@ -41,7 +37,7 @@ from tqdm    import tqdm
 
 ## CONFIGURATION
 MODEL_TO_RUN  = "Ridge"   # "Ridge" | "ElasticNet" | "XGBoost" | "RandomForest" | "SVR"
-LOG_TRANSFORM = True             # log1p-transform target before modelling
+LOG_TRANSFORM = True             #log1p-transform target before modelling
 
 N_ITER_SEARCH = {
     "Ridge"        : 15,
@@ -89,7 +85,7 @@ param_distributions = {
         'model__subsample'       : uniform(0.6, 0.4),
         'model__colsample_bytree': uniform(0.6, 0.4),
         'model__reg_lambda'      : loguniform(0.1, 1000),
-        'model__reg_alpha'       : loguniform(1e-3, 100,
+        'model__reg_alpha'       : loguniform(1e-3, 100),
         'model__gamma'           : uniform(0, 3),
     },
 
@@ -123,16 +119,17 @@ df['Aetiology_group'] = pd.Categorical(
     categories=AETIOLOGY_CATEGORIES,
 )
 
-# Log-transform skewed predictors upfront — deterministic, no leakage risk
+# Log-transform skewed predictors upfront
 df['Baseline_AMH_log']       = np.log1p(df['Baseline_AMH'])
 df['Baseline_follicles_log'] = np.log1p(df['Baseline_total_follicles'])
+df['Baseline_endometrium_log'] = np.log1p(df['Baseline_endometrium'])
 
 CANDIDATE_NUMERIC = [
     'Baseline_AMH_log',
     'Baseline_follicles_log',
     'Age',
     'BMI',
-    'Baseline_endometrium',
+    'Baseline_endometrium_log',
 ]
 
 CANDIDATE_CATEGORICAL = ['Aetiology_group']   # set to [] to exclude entirely
@@ -140,8 +137,7 @@ CANDIDATE_CATEGORICAL = ['Aetiology_group']   # set to [] to exclude entirely
 MAX_FEATURES = len(CANDIDATE_NUMERIC)
 
 ## PIPELINE
-## Scaler and imputer are inside the pipeline so they are fitted on the training fold only and applied to the test fold — no leakage
-## Tree-based models are scale-invariant but scaling is retained for consistency and to support future pipeline variants
+## Scaler and imputer are inside the pipeline so they are fitted on the training fold only and applied to the test fold
 
 def build_pipeline(estimator, numeric_features, categorical_features, model_name):
 
@@ -183,8 +179,7 @@ inner_cv = KFold(n_splits=5, shuffle=True, random_state=42)
 
 
 ## FEATURE COMBINATION LIST
-## Every numeric subset (size MIN_FEATURES to MAX_FEATURES) paired
-## with and without Aetiology_group — 52 combos per model family
+## Every numeric subset with and without Aetiology_group
 
 all_combos = [
     (MODEL_TO_RUN, list(num_feats), cat_feats)
@@ -226,10 +221,9 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(df), start=1):
         y_train_outer = y_train_outer_raw
         y_test_outer  = y_test_outer_raw
 
-    # Inner loop: exhaustive screening + hyperparameter tuning
+    # Inner loop: screening + hyperparameter tuning
     # For each predictor combo, RandomizedSearchCV tunes hyperparameters using
-    # inner_cv (5-fold) on df_train_outer only. The outer test fold is never
-    # seen here. The combo with the best inner MAE is selected.
+    # inner_cv (5-fold) on df_train_outer only. The outer test fold is never seen - combo with the best inner MAE is selected
 
     best_inner_mae = np.inf
     best_search    = None
@@ -260,7 +254,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(df), start=1):
             cv                 =inner_cv,
             scoring            ='neg_mean_absolute_error',
             n_jobs             =6,
-            refit              =True,        # refits best config on full df_train_outer subset
+            refit              =True,        
             random_state       =42,
             verbose            =0,
         )
@@ -281,9 +275,8 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(df), start=1):
             }
 
     # Evaluate on outer test fold
-    # best_search.best_estimator_ is already fitted on df_train_outer
-    # (the winning combo's feature subset) because refit=True.
-    # We call predict once on the untouched outer test fold.
+    # best_search.best_estimator_ is already fitted on df_train_outer because refit=True.
+    # Predict once on the untouched outer test fold.
 
     selected_features  = best_config['all_features']
     X_test_outer_best  = df_test_outer[selected_features].copy()
@@ -292,7 +285,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(df), start=1):
     final_model  = best_search.best_estimator_
     y_pred_outer = final_model.predict(X_test_outer_best)
 
-    # Back-transform to oocyte units for interpretable metrics
+    # Back-transform to oocyte units for interpretation
     if LOG_TRANSFORM:
         y_test_eval = np.expm1(y_test_outer)
         y_pred_eval = np.expm1(y_pred_outer)
@@ -304,9 +297,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(df), start=1):
     outer_rmse = np.sqrt(mean_squared_error(y_test_eval, y_pred_eval))
     outer_r2   = r2_score(y_test_eval, y_pred_eval)
 
-    # Overfitting diagnostic
-    # Train predictions from the same final model — purely diagnostic,
-    # does not influence selection or reported test metrics
+    # Overfitting 
 
     y_train_pred = final_model.predict(X_train_outer_best)
 
