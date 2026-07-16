@@ -1,0 +1,9 @@
+name: ml_env
+channels:
+  - conda-forge
+  - bioconda
+  - Bioconda
+  - defaults
+dependencies:
+  - python=3.12
+prefix: /users/k25023936/.conda/envs/ml_env
