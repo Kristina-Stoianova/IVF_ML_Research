@@ -60,16 +60,14 @@ conda env create -f environment.yml
 conda activate ml_env
 ​```
 
-## Run modelling pipeline by submitted as batch job using bash script:
+- Run modelling pipeline by submitted as batch job using bash script:
 ​```bash
 sbatch -p run_script.sh
 ​```
 
-## Output of modelling 
-.csv results saved in `results/`; 
-figures in `figures/`.
-
-## Environment:
+### Output of modelling 
+.CSV results saved in `results/`
+;figures in `figures/`.
 
 ### Python (3.12.13)
  - Recreate with the conda environment file:
@@ -103,7 +101,6 @@ install.packages(c(
 
 ```
 ​
-
 
 | Package | Version | | Package | Version |
 |------------|---------|---|-----------|---------|
