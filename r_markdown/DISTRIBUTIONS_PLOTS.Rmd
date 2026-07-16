@@ -605,15 +605,4 @@ p_mii_aetiology <- ggplot(df, aes(x = Aetiology_group, y = Total_gonadotropin_do
 
 p_mii_aetiology
 ```
-```{r}
-sessionInfo()
-packageVersion("here")
-packageVersion("tidyverse")
-packageVersion("dplyr")
-packageVersion("ggplot2")
-packageVersion("ggpubr")
-packageVersion("ggcorrplot")
-packageVersion("patchwork")
-```
-
 
