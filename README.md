@@ -1,11 +1,10 @@
 # Using Machine Learning to predict outcomes of Controlled Ovarian Stimulation (COS) in IVF/ICSI cycles
- -  Predicting the number of Metaphase II oocytes from Baseline Pre-treatment Clinical Predictors 
+ -  Predicting the number of Metaphase II (MII) oocytes from Baseline Pre-treatment Clinical Variables
 
-# This project develops an extensive data cleaning pipeline to clean messy clinical data
-
-# This project develops a custom workflow to predict the number of MII oocytes and identify top predictors
- - 5 model families are evalauted: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
-
+## 1. An extensive data cleaning pipeline is developed to prepare clinical data for modelling
+## 2. A custom predictive modelling workflow is developed to predict the number of MII oocytes and identify top predictors
+  - 5 model families are evalauted: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
+  
 ## There are 2 main ML pipelines built in Python 3.12.13 using scikit-learn and xgboost:
 - Repeated k-fold cross-validation screening pipeline
    - Iteratively evaluates all possible predictor combinations
@@ -17,41 +16,53 @@
 ## Repository structure
 
 ```
-├─r_markdown/           # R data cleaning, preprocessing, and  statistical analysis notebooks (.Rmd)
-├─processing_scripts/   # R helper functions required for data cleaning (sourced by the .Rmd file
-├─modelling_scripts/    # Python screening, nested CV, final interpretation of SVR model
-├─hpc/                  # SLURM submission script
-├─results/              # Pipeline results / .csv outputs
-├─figures/              # Figures
-├─data/                 
-├── environment.yml       # Conda environment for the Python/HPC modelling
-└── renv.lock             # R package versions
+IVF_ML_research/
+├── data/
+│   ├── raw/                            # original patient data (pre-cleaning)
+│   └── processed/                      # cleaned, model-ready CSVs
+├── r_markdown/
+│   └── Cleaning_pipe.Rmd               # main R cleaning & preprocessing pipeline
+├── processing_scripts/
+│   ├── cleaning_helpers.R              # value standardisation helpers
+│   └── cleaning_functions_parsers.R    # stimulation/trigger string parsers
+├── modelling_scripts/
+│   ├── model_looping1.py               # Repeated k-fold cross-validation screening pipeline
+│   ├── nested_model_looping.py         # Nested cross-validation
+│   ├── nested_single_mode.py           # Nested cross-validation - fixed predictors only tunes hyperparameters
+│   ├── run_script.sh                   # Example submission script
+│   └── SVR_interpretation.ipynb        # SVR interpretation (SHAP, perm importance) - fixed predictors and hyperparameters
+├── results/                            # pipeline outputs / .csv metrics
+├── figures/                            # generated figures (PNG/PDF)
+├── environment.yml                     # Python env (conda) ml_env
+└── renv.lock                           # R package versions
 ```
 
+| Workflow step | Description |
+|---------------|-------------|
+| **1. Clean** | Run the cleaning notebook in `r_markdown/` (sources helper functions from `processing_scripts/`) to generate the clean dataset |
+| **2. Pre-processing, feature selection and exploratory analysis** | Missingness (`naniar`), Correlation (`ggcorrplot`), Exploratory modelling (`MASS`) |
+| **3. ML modelling** | scikit-learn pipeline (iterative predictor screening --> nested CV --> SHAP interpretation) |
 
-**1. Clean** — run the cleaning notebook in `r_markdown/` ( source helper functions
-from `processing_scripts/`) to generate clean dataset
-
-**2. Pre-processing, Feature Selection and Exploratory Analysis** — missingness (`naniar`), correlation (`ggcorrplot`), exploratory modelling (`MASS`)
-
-**3. ML Modelling (HPC)** — submit as batch job via bash script, this will run the screening and nested cv pipelines
-
-​```bash
-sbatch submit_modelling.sh
-​```
-
-.csv results saved in `results/`; figures in `figures/`.
 
 ## Environment
 
-### Python (HPC modelling)
+### Python ML modelling is performed on the HPC 
+### SVR interpretation can be run locally  
+#### In both cases conda enviornment captures package dependencies
+
 ​```bash
 conda env create -f environment.yml
 conda activate ml_env
 ​```
 
-### R (Data cleaning + exploratory analysis)
-​```r
-renv::restore()
+
+​```bash
+sbatch -p run_script.sh
 ​```
 
+## Output of modelling 
+
+.csv results saved in `results/`; 
+figures in `figures/`.
+
+### The workflow is optimised for a small dataset
