@@ -92,7 +92,8 @@ conda activate ml_env
 
 ### R (4.5.1)
 
-​```r
+​
+```r
 install.packages(c(
   "here", "janitor", "tidyverse", "readr", "dplyr", "stringr",
   "knitr", "ggplot2", "ggcorrplot", "purrr", "naniar", "Amelia",
@@ -100,7 +101,9 @@ install.packages(c(
   "MASS", "broom", "car"
 ))
 
-​```
+```
+​
+
 
 | Package | Version | | Package | Version |
 |------------|---------|---|-----------|---------|
