@@ -1,10 +1,12 @@
-# Predicting Metaphase II (MII) Oocyte Yield from Baseline Pre-treatment Clinical Predictors
+# Using Machine Learning to predict outcomes of Controlled Ovarian Stimulation (COS) in IVF/ICSI cycles
+##  Predicting Metaphase II (MII) Oocyte Yield from Baseline Pre-treatment Clinical Predictors 
 
-Machine-learning pipeline for predicting metaphase-II (MII) oocyte yield from
-baseline clinical predictors in IVF patients on a short antagonist protocol
- - 5 model families are evalauted: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
+This project develops an extensive data cleaning pipeline to clean messy clinical data
+This project develops a custom workflow to predict the number of MII oocytes and identify top predictors
 
-There are 2 main pipelines in this project:
+5 model families are evalauted: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
+
+There are 2 main ML pipelines built in Python 3.11 using scikit-learn and xgboost:
 - Repeated k-fold cross-validation screening pipeline
    - Iteratively evaluates all possible predictor combinations
 - Nested cross-validation pipeline
@@ -26,12 +28,9 @@ There are 2 main pipelines in this project:
 └── renv.lock             # R package versions
 ```
 
-## Pipeline / run order
 
-Stages 1–2 are local ; stage 3 runs on the HPC.
-
-**1. Clean** — run the cleaning notebook in `r_markdown/` (these source helpers
-from `processing_scripts/`, so keep relative paths intact) to generate clean dataset
+**1. Clean** — run the cleaning notebook in `r_markdown/` ( source helper functions
+from `processing_scripts/`) to generate clean dataset
 
 **2. Pre-processing, Feature Selection and Exploratory Analysis** — missingness (`naniar`), correlation (`ggcorrplot`), exploratory modelling (`MASS`)
 
@@ -41,7 +40,7 @@ from `processing_scripts/`, so keep relative paths intact) to generate clean dat
 sbatch submit_modelling.sh
 ​```
 
-CSV metrics land in `results/`; figures in `figures/`.
+.csv results saved in `results/`; figures in `figures/`.
 
 ## Environment
 
