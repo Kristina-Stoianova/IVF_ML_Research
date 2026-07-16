@@ -1,11 +1,11 @@
 # Using Machine Learning to predict outcomes of Controlled Ovarian Stimulation (COS) in IVF/ICSI cycles
  -  Predicting the number of Metaphase II (MII) oocytes from Baseline Pre-treatment Clinical Variables
 
-# Project:
+# Project Overview:
 
 ## 1. Development of a data cleaning pipeline to standardise and prepare clinical data for modelling
 
-## 2. Development of a custom predictive modelling workflow to predict the number of MII oocytes and identify top predictors
+## 2. Development of a custom modelling workflow to predict the number of MII oocytes and identify top predictors
   - 5 model families are evaluated: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
   
 ## There are 2 main ML pipelines built in Python 3.12.13 using scikit-learn and xgboost:
@@ -35,7 +35,7 @@ IVF_ML_research/
 │   ├── nested_model_looping.py         # Nested cross-validation
 │   ├── nested_single_mode.py           # Nested cross-validation - fixed predictors only tunes hyperparameters
 │   ├── run_script.sh                   # Example submission script
-│   └── SVR_interpretation.ipynb        # SVR interpretation (SHAP, perm importance) - fixed predictors and hyperparameters
+│   └── SVR_interpretation.ipynb        # SVR interpretation (SHAP, perm importance) - fixed predictors and hyperparameters (can be found in this notebook)
 ├── results/                            # pipeline outputs / .csv metrics
 ├── figures/                            # generated figures (PNG/PDF)
 ├── environment.yml                     # Python env (conda) ml_env
