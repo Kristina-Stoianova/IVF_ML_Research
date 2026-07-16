@@ -1,9 +1,15 @@
 name: ml_env
 channels:
   - conda-forge
-  - bioconda
-  - Bioconda
-  - defaults
 dependencies:
   - python=3.12
-prefix: /users/k25023936/.conda/envs/ml_env
+  - pip
+  - numpy=2.0.2
+  - pandas=2.2.2
+  - scipy=1.16.3
+  - scikit-learn=1.6.1
+  - matplotlib=3.10.0
+  - xgboost=3.2.0
+  - tqdm=4.67.3
+  - pip:
+      - shap==0.52.0
