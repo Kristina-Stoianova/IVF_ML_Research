@@ -1,7 +1,8 @@
 # Using Machine Learning to predict outcomes of Controlled Ovarian Stimulation (COS) in IVF/ICSI cycles
-##  Predicting Metaphase II (MII) Oocyte Yield from Baseline Pre-treatment Clinical Predictors 
+ -  Predicting the number of Metaphase II oocytes from Baseline Pre-treatment Clinical Predictors 
 
 This project develops an extensive data cleaning pipeline to clean messy clinical data
+
 This project develops a custom workflow to predict the number of MII oocytes and identify top predictors
 
 5 model families are evalauted: Ridge regression, ElasticNet, Support Vector Regression, RandomForest, and XGBoost
