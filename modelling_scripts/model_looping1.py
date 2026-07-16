@@ -1,6 +1,6 @@
 ## Screening Pipeline
 
-## Exhuastively tests every combination of candidate predictors for a single model family at a time
+## Iteratively tests every combination of candidate predictors for a single model family at a time
 ## Output = .csv of feature combinations and their performance metrics
 ## Screening stage --> absolute metrics may be slightly optimistic as hyperparameters are tuned on the full dataset before CV evaluation
 
@@ -16,8 +16,6 @@
 ## Random state set to 42 for tree-based models - reproducibility
 ## n_jobs = number of CPUs, can specify in bash running script
 
-## Version Requirements:
-## Python 3.11, scikit-learn, xgboost, numpy, pandas, scipy, tqdm
 
 import os
 import numpy as np
@@ -64,8 +62,8 @@ N_ITER_SEARCH = { # RandomizedSearchCV iterations per combination
 MIN_FEATURES  = 2            # minimum numeric features per combo
 # MAX_FEATURES is set automatically to len(CANDIDATE_NUMERIC) below
 
-DATA_PATH  = '/users/k25023936/IVF_research/data/processed/shortprotocol_firstconsentedcycle.csv'
-SAVE_DIR   = '/users/k25023936/IVF_research/results'
+DATA_PATH  = '/data/processed/shortprotocol_firstconsentedcycle.csv'
+SAVE_DIR   = '/results'
 TARGET     = 'No_mature_eggs'
 
 AETIOLOGY_CATEGORIES = [
@@ -77,8 +75,9 @@ AETIOLOGY_CATEGORIES = [
 ## KNNImputer requires scaled input for correct distance calculations
 ## Scaling applied before imputation
 ## Scaler and imputation applied on training fold to prevent leakage
-## Tree based models are invariant to monotonic transformations so scaling has no effect on their predictions or performance
-## Simplifies pipeline without affecting tree based models
+## Tree-based models do not require scaling
+## However tree-based models are still imputed with KNN which requires scaling
+## Simplifies pipeline without affecting tree-based models
 
 ## Scaling block is retained to make scaling intent explicit per model and to support future pipeline variants where scaling may be conditionally applied
 
@@ -102,52 +101,33 @@ param_distributions = {
  
     "ElasticNet": {
 	'model__alpha': loguniform(1e-3, 1e5),
-	# Mix between L1 and L2 , 0 = pure Ridge, 1 = pure Lasso
 	'model__l1_ratio': uniform(0.05, 0.90),
     },
  
     "RandomForest": {
-        # More trees reduce variance -  diminishing returns past ~400 at n=61
         'model__n_estimators'     : randint(100, 400),
-        # Shallow trees reduce overfitting risks at small n
         'model__max_depth'        : randint(2, 7),
-        # High min_samples_split avoids overly specific splits
         'model__min_samples_split': randint(5, 20),
-        # min_samples_leaf >= 3 prevents 1-sample leaves
         'model__min_samples_leaf' : randint(3, 12),
-        # sqrt / log2 reduce correlation between trees
         'model__max_features'     : ['sqrt', 'log2', 0.7, 1.0],
     },
  
     "XGBoost": {
-        # Low LR + more trees works best; cap trees at 500 for small n
         'model__learning_rate'   : loguniform(0.01, 0.3),
         'model__n_estimators'    : randint(50, 400),
-        # Keep shallow
         'model__max_depth'       : randint(2, 5),
-        # Minimum sum of instance weights per leaf — key regulariser for small n
         'model__min_child_weight': randint(2, 15),
-        # Row subsampling — regularises and speeds up
-        'model__subsample'       : uniform(0.6, 0.4),   # 0.6 → 1.0
-        # Column subsampling per tree
-        'model__colsample_bytree': uniform(0.6, 0.4),   # 0.6 → 1.0
-        # L2 regularisation — floor below XGBoost default (1) to explore more
+        'model__subsample'       : uniform(0.6, 0.4),
+        'model__colsample_bytree': uniform(0.6, 0.4),
         'model__reg_lambda'      : loguniform(0.1, 1000),
-        # L1 regularisation
         'model__reg_alpha'       : loguniform(1e-3, 1e4),
-        # Minimum loss reduction to allow a split
         'model__gamma'           : uniform(0, 3),
     },
  
     "SVR": {
-        # C = inverse regularisation strength; small C = stronger regularisation
-        # loguniform appropriate — C commonly searched across several OOM
         'model__C'      : loguniform(0.01, 1e5),
-        # Epsilon defines the insensitive tube — search on log scale
         'model__epsilon': loguniform(0.01, 1000),
-        # Kernel — rbf usually best for tabular regression; linear included
         'model__kernel' : ['rbf', 'linear'],
-        # Gamma only relevant for rbf; scale = 1/(n_features * X.var())
         'model__gamma'  : ['scale', 'auto'],
     },
 }
@@ -208,7 +188,7 @@ print(f"Missing in target: {y_raw.isnull().sum()}")
 ## StandardScaler applied as the first step
 ## KNNImputer is fitted on each training fold and applies to the corresponding test fold - preventing leakage of test set info into imputed values
 
-## Categorical features receive mode imputation and are one hot encoded with the first category dropped 
+## Categorical features receives mode imputation and are one hot encoded with the first category dropped 
 
 def build_pipeline(estimator, numeric_features, categorical_features, model_name):
 
@@ -249,7 +229,7 @@ def build_pipeline(estimator, numeric_features, categorical_features, model_name
 ##                5 repeats is sufficient for screening
 ##                NOTE: hyperparameters are tuned on the full dataset before
 ##                this evaluation, so metrics are consistent for ranking but
-##                slightly optimistic in absolute terms
+##                slightly optimistic
 ##
 ##   kf_predict — single-pass KFold for cross_val_predict. Repeated folds are
 ##                incompatible with cross_val_predict because each sample must
