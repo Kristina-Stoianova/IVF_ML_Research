@@ -15,6 +15,7 @@
    - Used to separate model selection from evaluation
    - Provides a less optimistic estimate of performance 
    - Allows predictor stability to be assessed
+- The workflow is optimised for a small dataset and addresses missing data with KNN imputation
 
 > **Data availability:** the patient dataset is *not* included in this repository
 
@@ -68,4 +69,49 @@ sbatch -p run_script.sh
 .csv results saved in `results/`; 
 figures in `figures/`.
 
-### The workflow is optimised for a small dataset and addresses missing data with KNN imputation
+## Environment:
+
+### Python (3.12.13)
+ - Recreate with the conda environment file:
+
+​```bash
+conda env create -f environment.yml
+conda activate ml_env
+​```
+
+| Package | Version |
+|--------------|---------|
+| scikit-learn | 1.6.1 |
+| xgboost | 3.2.0 |
+| shap | 0.52.0 |
+| scipy | 1.16.3 |
+| pandas | 2.2.2 |
+| numpy | 2.0.2 |
+| matplotlib | 3.10.0 |
+| tqdm | 4.67.3 |
+
+### R (4.5.1)
+
+​```r
+install.packages(c(
+  "here", "janitor", "tidyverse", "readr", "dplyr", "stringr",
+  "knitr", "ggplot2", "ggcorrplot", "purrr", "naniar", "Amelia",
+  "UpSetR", "VIM", "ggpubr", "patchwork", "cowplot", "FSA",
+  "MASS", "broom", "car"
+))
+
+​```
+
+| Package | Version | | Package | Version |
+|------------|---------|---|-----------|---------|
+| here | 1.0.2 | | naniar | 1.1.0 |
+| janitor | 2.2.1 | | Amelia | 1.8.3 |
+| tidyverse | 2.0.0 | | UpSetR | 1.4.0 |
+| readr | 2.1.6 | | VIM | 6.2.6 |
+| dplyr | 1.2.0 | | ggpubr | 0.6.3 |
+| stringr | 1.6.0 | | patchwork | 1.3.2 |
+| knitr | 1.5.0 | | cowplot | 1.2.0 |
+| ggplot2 | 4.0.1 | | FSA | 0.10.1 |
+| ggcorrplot | 0.1.4.1 | | MASS | 7.3.65 |
+| purrr | 1.2.1 | | broom | 1.0.10 |
+| | | | car | 3.1.3 |
