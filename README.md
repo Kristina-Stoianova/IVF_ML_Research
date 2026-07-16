@@ -114,4 +114,4 @@ install.packages(c(
 | ggplot2 | 4.0.1 | | FSA | 0.10.1 |
 | ggcorrplot | 0.1.4.1 | | MASS | 7.3.65 |
 | purrr | 1.2.1 | | broom | 1.0.10 |
-| | | | car | 3.1.3 |
+| car | 3.1.3 | | | |
