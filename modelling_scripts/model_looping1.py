@@ -6,15 +6,14 @@
 
 ## How to use:
 ## set MODEL_TO_RUN to one model family per run
-## Rename SAVE_PATH before each run or results for new model will be overwritten
+## If you want to run multiple times with same model, rename SAVE_PATH
 ## Submit via HPC bash script with n_jobs set to available CPUs
+## Use same random seeds for model reproducibility
 
-## Scalability
 ## Hyperparameter search space can be modified
 ## Number of iterations, CV number of splits, and repeats can be modified as sample size grows
 ## User can choose features/predictor variables and select the minimum number in each model
-## Random state set to 42 for tree-based models - reproducibility
-## n_jobs = number of CPUs, can specify in bash running script
+## Random state set to 42 for tree-based models
 
 
 import os
@@ -71,12 +70,10 @@ AETIOLOGY_CATEGORIES = [
 ]
 
 ## SCALING CONFIGURATION
-## StandardScaler is applied inside every pipeline:
+## StandardScaler is applied inside every pipeline before imputation:
 ## KNNImputer requires scaled input for correct distance calculations
-## Scaling applied before imputation
 ## Scaler and imputation applied on training fold to prevent leakage
-## Tree-based models do not require scaling
-## However tree-based models are still imputed with KNN which requires scaling
+## Tree-based models do not require scaling but tree-based models are still imputed with KNN which requires scaling
 ## Simplifies pipeline without affecting tree-based models
 
 ## Scaling block is retained to make scaling intent explicit per model and to support future pipeline variants where scaling may be conditionally applied
@@ -155,7 +152,7 @@ df['Aetiology_group'] = pd.Categorical(
 )
 
 
-# Log-transform skewed continuous predictors (keeps original cols intact)
+# Log-transform skewed continuous predictors (keeps original data intact)
 df['Baseline_AMH_log']        = np.log1p(df['Baseline_AMH'])
 df['Baseline_follicles_log']  = np.log1p(df['Baseline_total_follicles'])
 #df['BMI_log']                 = np.log1p(df['BMI'])
@@ -186,7 +183,7 @@ print(f"Missing in target: {y_raw.isnull().sum()}")
 
 ## PIPELINE BUILDER
 ## StandardScaler applied as the first step
-## KNNImputer is fitted on each training fold and applies to the corresponding test fold - preventing leakage of test set info into imputed values
+## KNNImputer is fitted on each training fold and applies to the corresponding test fold
 
 ## Categorical features receives mode imputation and are one hot encoded with the first category dropped 
 

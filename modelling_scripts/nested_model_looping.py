@@ -1,18 +1,15 @@
 ## Nested Cross-Validation 
 ## Moves hyperparameter tuning inside each outer fold so the outer test fold is never touched during tuning
 
-##   Outer loop (RepeatedKFold, 25 folds) 
-##   Inner loop (KFold, 5 folds) — predictor combo selection + hyperparameter tuning
-##   Outer test fold untouched after selection is finalised
+## Outer loop (RepeatedKFold, 25 folds) 
+## Inner loop (KFold, 5 folds) — predictor selection + hyperparameter tuning
+## Outer test fold untouched after selection is finalised
 ##
-## Output:
-##   CSV with one row per outer fold 
+## Output = .csv with one row per outer fold 
 ##
-## Usage:
-##   Set MODEL_TO_RUN to one model family per run
-##   Submit via HPC bash script with n_jobs set to available CPUs
-##
-
+## USE:
+## Set MODEL_TO_RUN to one model family per run
+## Submit via HPC bash script with n_jobs set to available CPUs
 
 import os
 import numpy as np
@@ -138,6 +135,7 @@ MAX_FEATURES = len(CANDIDATE_NUMERIC)
 
 ## PIPELINE
 ## Scaler and imputer are inside the pipeline so they are fitted on the training fold only and applied to the test fold
+## Scaler before imputer as KNN is distance-based
 
 def build_pipeline(estimator, numeric_features, categorical_features, model_name):
 
@@ -222,8 +220,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(df), start=1):
         y_test_outer  = y_test_outer_raw
 
     # Inner loop: screening + hyperparameter tuning
-    # For each predictor combo, RandomizedSearchCV tunes hyperparameters using
-    # inner_cv (5-fold) on df_train_outer only. The outer test fold is never seen - combo with the best inner MAE is selected
+    # For each predictor conbination, RandomizedSearchCV tunes hyperparameters using inner_cv (5-fold) on df_train_outer only. The outer test fold is never seen - combo with the best inner MAE is selected
 
     best_inner_mae = np.inf
     best_search    = None
@@ -275,8 +272,8 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(df), start=1):
             }
 
     # Evaluate on outer test fold
-    # best_search.best_estimator_ is already fitted on df_train_outer because refit=True.
-    # Predict once on the untouched outer test fold.
+    # best_search.best_estimator_ is already fitted on df_train_outer because refit=True
+    # Predict once on the untouched outer test fold
 
     selected_features  = best_config['all_features']
     X_test_outer_best  = df_test_outer[selected_features].copy()

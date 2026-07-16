@@ -7,12 +7,12 @@
 ## The inner loop tunes hyperparameters only
 ## Every outer fold now estimates the SAME model, the outer MAE mean +/- SD
 ## Less optimistic estimate of final model performance and generalisation error
-##
+
 ## Nested CV:
 ## Outer loop (RepeatedKFold, 25 folds) 
 ## Inner loop (KFold, 5 folds)- hyperparameter tuning only, on the outer-train fold
 ## Outer test fold untouched until evaluation
-##
+
 ## Output:
 ##   1) CSV one row per outer fold
 ##   2) Summary = mean +/- SD across folds
@@ -38,7 +38,6 @@ from xgboost import XGBRegressor
 
 
 ##CONFIGURATION
-## Set these to describe model
 
 MODEL_TO_RUN  = "SVR"    # "Ridge" | "ElasticNet" | "SVR" | "RandomForest" | "XGBoost"
 LOG_TRANSFORM = True     # log1p-transform the target before modelling
@@ -141,6 +140,7 @@ for src, dst in [
         df[dst] = np.log1p(df[src])
 
 # Validate that the fixed predictors actually exist
+
 missing = [c for c in FIXED_NUMERIC + FIXED_CATEGORICAL if c not in df.columns]
 if missing:
     raise ValueError(f"Fixed predictors not found in data: {missing}")
@@ -187,14 +187,12 @@ def build_pipeline(estimator, numeric_features, categorical_features):
     ])
 
 
-## nested cross-validation
-## same structure to the exhaustive nested script 
+## Nested CV - same structure to the exhaustive nested script 
 
 outer_cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=99)
 inner_cv = KFold(n_splits=5, shuffle=True, random_state=42)
 
 
-## NESTED CV 
 ## No feature search, fixed predictors, inner loop tunes hyperparameters only
 
 nested_results = []
