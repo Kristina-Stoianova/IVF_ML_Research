@@ -22,6 +22,7 @@ df <- read_csv(
 )
 ```
 
+## Factor categorical variables and log-trasnform skewed
 ```{r}
 df$Aetiology_group <- factor(df$Aetiology_group)
 df$Aetiology_group <- relevel(
@@ -43,6 +44,13 @@ df <- df %>%
   )
 ```
 
+## GLM not suited to data - heteroscedascitiy 
+```{r}
+glm <- lm(No_mature_eggs ~ Age + BMI + log_AMH + log_baseline_follicles + Baseline_endometrium + Aetiology_group,
+  data = df)
+
+plot(glm)
+```
 
 ## Fit Poisson model first and check whether residual variation is larger than expected
 ```{r}
@@ -56,10 +64,12 @@ poisson_model <- glm(
 overdispersion_ratio <- sum(residuals(poisson_model, type = "pearson")^2) /
   poisson_model$df.residual
 
-overdispersion_ratio
+overdispersion_ratio #2.13589
 ```
 
+## NEGATIVE BINOMIAL REGRESSION
 
+## Model 1:  pre-treatment baseline
 ```{r}
 model_nb1 <- glm.nb(
   No_mature_eggs ~ Age + BMI + log_AMH + log_baseline_follicles + Baseline_endometrium + Aetiology_group,
@@ -81,6 +91,7 @@ nb_table <- tidy(model_nb1, conf.int = TRUE, exponentiate = TRUE) %>%
 nb_table
 ```
 
+## Model 2: pre-treatment baseline + regimen
 ```{r}
 model_nb2 <- glm.nb(
   No_mature_eggs ~ Age + BMI + log_baseline_follicles + log_AMH + Treatment_type + Aetiology_group,
@@ -91,70 +102,7 @@ summary(model_nb2)
 exp(coef(model_nb2))
 ```
 
-## compare poisson and nbd residuals plots --> they look the samme --> supplementary figure?
-```{r}
-par(mfrow = c(1, 2))
-
-# Poisson
-plot(
-  fitted(poisson_model), rstandard(poisson_model),
-  col = "steelblue",
-  pch = 16,
-  xlab = "Predicted MII",
-  ylab = "Standardised residuals",
-  main = "Poisson"
-)
-abline(h = 0, lty = 2)
-abline(h = c(-2, 2), lty = 3, col = "grey40")
-
-# Negative binomial
-plot(
-  fitted(model1), rstandard(model1),
-  col = "steelblue",
-  pch = 16,
-  xlab = "Predicted MII",
-  ylab = "Standardised residuals",
-  main = "Negative binomial"
-)
-abline(h = 0, lty = 2)
-abline(h = c(-2, 2), lty = 3, col = "grey40")
-
-par(mfrow = c(1, 1))
-```
-
-## Fit Poisson Generalized Linear Model and see overdispersion, if overdispersion is present --> switch to negative binomial regression
-
-```{r}
-## Poisson GLM
-poisson_model <- glm(
-  No_mature_eggs ~ Age + BMI + loBaseline_AMH + Baseline_total_follicles + Baseline_endometrium,
-  data = df,
-  family = poisson(link = "log")
-)
-
-## Overdispersion checks ---> Over dispersion is present
-dispersion_ratio <- deviance(poisson_model) / df.residual(poisson_model)
-dispersion_ratio ##3.571943
-
-pearson_dispersion <- sum(residuals(poisson_model, type = "pearson")^2) /
-  df.residual(poisson_model) ##3.261497
-pearson_dispersion
-
-## Negative Binomial Model
-nb1 <- glm.nb(
-  No_mature_eggs ~ Age + BMI + log_AMH + log_baseline_follicles + Baseline_endometrium + Aetiology_group,
-  data = df
-)
-
-AIC(poisson_model, nb1) ## lower AIC --> bettwe suited to data
-
-summary(nb1)
-exp(coef(nb1))
-
-tidy(nb1, exponentiate = TRUE, conf.int = TRUE)
-```
-
-
+## Model 3: pre-treatment baseline + starting dose
 ```{r}
 model_nb3 <- glm.nb(
   No_mature_eggs ~ Age + BMI + log_AMH * Starting_gonadotropin_dose + log_baseline_follicles + Baseline_endometrium + Aetiology_group,
@@ -165,6 +113,7 @@ summary(model_nb3)
 exp(coef(model_nb3))
 ```
 
+## Model 3: centre AMH and starting dose
 ```{r}
 df <- df %>%
   mutate(
@@ -192,465 +141,7 @@ summary(nb4)
 exp(coef(nb4))
 ```
 
-
-
-```{r}
-irr_data <- tidy(nb3, conf.int = TRUE) %>%
-  filter(term != "(Intercept)") %>%
-  mutate(
-    IRR = exp(estimate),
-    conf.low.IRR = exp(conf.low),
-    conf.high.IRR = exp(conf.high),
-    Predictor = recode(
-      term,
-      "Age" = "Age",
-      "BMI" = "BMI",
-      "log_AMH" = "AMH",
-      "Baseline_AMH" = "AMH",
-      "log_baseline_follicles" = "Total follicle count",
-      "Baseline_total_follicles" = "Total follicle count",
-      "Baseline_endometrium" = "Endometrial thickness",
-      "Aetiology_groupNo_female_factor" = "No female factor",
-      "Aetiology_groupUnexplained" = "Unexplained infertility",
-      "Treatment_typeDual" = "Dual",
-      "Treatment_typehMG only" = "Treatment: hMG only",
-      "Starting_gonadotropin_dose" = "Starting gonadotropin dose",
-      "log_AMH:Starting_gonadotropin_dose" = "AMH × Starting dose"
-    ),
-    Direction = case_when(
-      IRR > 1 ~ "Positive",
-      IRR < 1 ~ "Negative",
-      TRUE ~ "Neutral"
-    ),
-    Significant = p.value < 0.05,
-    irr_label = sprintf("%.3f", IRR)
-  )
-
-ggplot(
-  irr_data,
-  aes(x = IRR, y = fct_reorder(Predictor, IRR))
-) +
-  geom_vline(
-    xintercept = 1,
-    linetype = "dashed",
-    colour = "grey50",
-    linewidth = 0.7
-  ) +
-
-  geom_segment(
-    aes(
-      x = 1,
-      xend = IRR,
-      yend = Predictor,
-      colour = Direction
-    ),
-    linewidth = 1
-  ) +
-
-  geom_point(
-    aes(
-      colour = Direction,
-      shape = Significant
-    ),
-    size = 4,
-    stroke = 1
-  ) +
-
-  geom_text(
-    aes(
-      label = irr_label,
-      hjust = if_else(IRR >= 1, -0.25, 1.25)
-    ),
-    size = 4.5,
-    fontface = "bold",
-    show.legend = FALSE
-  ) +
-
-  scale_colour_manual(
-    values = c(
-      "Positive" = "#D6604D",
-      "Negative" = "#2166AC",
-      "Neutral" = "grey"
-    )
-  ) +
-
-  scale_shape_manual(
-    values = c(
-      "TRUE" = 16,
-      "FALSE" = 1
-    ),
-    labels = c(
-      "TRUE" = "p < 0.05",
-      "FALSE" = "p ≥ 0.05"
-    )
-  ) +
-
-  scale_x_continuous(
-    position = "top",
-    expand = expansion(mult = c(0.10, 0.20))
-  ) +
-
-  labs(
-    x = "Incidence rate ratio (IRR)",
-    y = NULL,
-    colour = "Direction",
-    shape = NULL
-  ) +
-
-  theme_classic(base_size = 15) +
-
-  theme(
-    axis.title.x = element_text(
-      face = "bold",
-      size = 16,
-      margin = margin(b = 10)
-    ),
-    axis.text.x = element_text(
-      size = 14,
-      face = "bold"
-    ),
-    axis.text.y = element_text(
-      size = 14,
-      margin = margin(r = 10)
-    ),
-    axis.line = element_line(linewidth = 0.6),
-    axis.ticks = element_line(linewidth = 0.6),
-    axis.ticks.length = unit(0.18, "cm"),
-    legend.position = "bottom",
-    legend.text = element_text(size = 13),
-    legend.title = element_text(size = 13, face = "bold"),
-    plot.margin = margin(15, 50, 10, 10)
-  ) +
-
-  coord_cartesian(clip = "off")
-
-
-irr_data <- irr_data %>%
-  mutate(
-    Predictor = fct_reorder(Predictor, IRR)
-  )
-
-ggplot(
-  irr_data,
-  aes(x = IRR, y = Predictor)
-) +
-
-  # Null association: IRR = 1
-  geom_vline(
-    xintercept = 1,
-    linetype = "dashed",
-    colour = "grey45",
-    linewidth = 0.7
-  ) +
-
-  geom_segment(
-    aes(
-      x = 1,
-      xend = IRR,
-      yend = Predictor,
-      colour = Direction
-    ),
-    linewidth = 1
-  ) +
-
-  geom_point(
-    aes(
-      colour = Direction,
-      shape = Significant
-    ),
-    size = 4,
-    stroke = 1.1
-  ) +
-
-  # Labels for IRRs above 1
-  geom_text(
-    data = irr_data %>% filter(IRR >= 1),
-    aes(label = irr_label),
-    nudge_x = 0.035,
-    hjust = 0,
-    size = 4,
-    fontface = "bold",
-    show.legend = FALSE
-  ) +
-
-  # Labels for IRRs below 1
-  geom_text(
-    data = irr_data %>% filter(IRR < 1),
-    aes(label = irr_label),
-    nudge_x = -0.025,
-    hjust = 1,
-    size = 4,
-    fontface = "bold",
-    show.legend = FALSE
-  ) +
-
-  scale_colour_manual(
-    values = c(
-      "Positive" = "#D6604D",
-      "Negative" = "#2166AC",
-      "Neutral" = "grey"
-    )
-  ) +
-
-  scale_shape_manual(
-    values = c(
-      "TRUE" = 16,
-      "FALSE" = 1
-    ),
-    labels = c(
-      "TRUE" = "p < 0.05",
-      "FALSE" = "p ≥ 0.05"
-    )
-  ) +
-
-  # Axis at bottom, with more room below IRR = 1
-  scale_x_continuous(
-    position = "bottom",
-    limits = c(0.80, 2.30),
-    breaks = c(
-      0.8, 1.0, 1.2, 1.4,
-      1.6, 1.8, 2.0, 2.2
-    ),
-    expand = expansion(mult = c(0, 0.01))
-  ) +
-
-  labs(
-    x = "Incidence rate ratio (IRR)",
-    y = NULL,
-    colour = "Direction",
-    shape = NULL
-  ) +
-
-  theme_classic(base_size = 14) +
-
-  theme(
-    # Axis title
-    axis.title.x = element_text(
-      face = "bold",
-      size = 15,
-      margin = margin(t = 10)
-    ),
-
-    # IRR axis values
-    axis.text.x = element_text(
-      face = "bold",
-      size = 12
-    ),
-
-    # Predictor names
-    axis.text.y = element_text(
-      face = "bold",
-      size = 12,
-      margin = margin(r = 8)
-    ),
-
-    axis.line = element_line(linewidth = 0.7),
-    axis.ticks = element_line(linewidth = 0.7),
-
-    legend.position = "bottom",
-    legend.text = element_text(size = 12),
-    legend.title = element_text(
-      face = "bold",
-      size = 12
-    ),
-
-    plot.margin = margin(
-      t = 10,
-      r = 35,
-      b = 10,
-      l = 10
-    )
-  ) +
-
-  coord_cartesian(clip = "off")
-```
-
-```{r}
-coef_data <- tidy(model_nb1, conf.int = TRUE) %>%
-  filter(term != "(Intercept)") %>%
-  mutate(
-    Predictor = dplyr::recode(
-      term,
-      "Age" = "Age",
-      "BMI" = "BMI",
-      "log_AMH" = "AMH",
-      "Baseline_AMH" = "AMH",
-      "log_baseline_follicles" = "Total follicle count",
-      "Baseline_total_follicles" = "Total follicle count",
-      "Baseline_endometrium" = "Endometrial thickness",
-      "Aetiology_groupNo_female_factor" = "No female factor",
-      "Aetiology_groupUnexplained" = "Unexplained infertility",
-      "Treatment_typeDual" = "Dual stimulation",
-      "Treatment_typehMG only" = "hMG only",
-      "Starting_gonadotropin_dose" = "Starting gonadotropin dose",
-      "log_AMH:Starting_gonadotropin_dose" = "AMH × starting dose"
-    ),
-    Direction = if_else(
-      estimate > 0,
-      "Positive association",
-      "Negative association"
-    ),
-    Predictor = fct_reorder(Predictor, estimate)
-  )
-
-
-ggplot(
-  coef_data,
-  aes(x = estimate, y = Predictor)
-) +
-  geom_vline(
-    xintercept = 0,
-    linetype = "dashed",
-    colour = "grey40",
-    linewidth = 0.7
-  ) +
-  geom_segment(
-    aes(
-      x = 0,
-      xend = estimate,
-      yend = Predictor,
-      colour = Direction
-    ),
-    linewidth = 1.2
-  ) +
-  geom_point(
-    aes(colour = Direction),
-    size = 4
-  ) +
-  scale_colour_manual(
-    values = c(
-      "Negative association" = "#2166AC",
-      "Positive association" = "red"
-    )
-  ) +
-  labs(
-    x = "NB Regression coefficient (β)",
-    y = NULL,
-    colour = NULL
-  ) +
-  theme_classic(base_size = 14) +
-  theme(
-    axis.title.x = element_text(
-      face = "bold",
-      size = 14,
-      margin = margin(t = 10)
-    ),
-    axis.text.x = element_text(
-      face = "bold",
-      size = 12
-    ),
-    axis.text.y = element_text(
-      face = "bold",
-      size = 12,
-      margin = margin(r = 8)
-    ),
-    legend.position = "bottom",
-    plot.margin = margin(10, 20, 10, 10)
-  )
-```
-
-```{r}
-irr_data <- tidy(model_nb3, conf.int = TRUE) %>%
-  filter(term != "(Intercept)") %>%
-  mutate(
-    IRR = exp(estimate),
-
-    Predictor = dplyr::recode(
-      term,
-      "Age" = "Age",
-      "BMI" = "BMI",
-      "log_AMH" = "AMH",
-      "Baseline_AMH" = "AMH",
-      "log_baseline_follicles" = "Total follicle count",
-      "Baseline_total_follicles" = "Total follicle count",
-      "Baseline_endometrium" = "Endometrial thickness",
-      "Aetiology_groupNo_female_factor" = "No female factor",
-      "Aetiology_groupUnexplained" = "Unexplained infertility",
-      "Treatment_typeDual" = "Dual stimulation",
-      "Treatment_typehMG_only" = "hMG only",
-      "Starting_gonadotropin_dose" = "Starting gonadotropin dose",
-      "log_AMH:Starting_gonadotropin_dose" = "AMH × Starting dose",
-      "log_AMH:Total_gonadotropin_dose" = "AMH x Total dose"
-    ),
-
-    Direction = if_else(
-      IRR > 1,
-      "Higher expected MII count",
-      "Lower expected MII count"
-    ),
-
-    Predictor = fct_reorder(Predictor, IRR)
-  )
-
-ggplot(
-  irr_data,
-  aes(x = IRR, y = Predictor)
-) +
-
-  # IRR = 1 indicates no association
-  geom_vline(
-    xintercept = 1,
-    linetype = "dashed",
-    colour = "grey40",
-    linewidth = 0.8
-  ) +
-
-  # Line from the null value to each IRR
-  geom_segment(
-    aes(
-      x = 1,
-      xend = IRR,
-      yend = Predictor,
-      colour = Direction
-    ),
-    linewidth = 1.2
-  ) +
-
-  # IRR estimate
-  geom_point(
-    aes(colour = Direction),
-    size = 4
-  ) +
-
-  scale_colour_manual(
-    values = c(
-      "Lower expected MII count" = "#2166AC",
-      "Higher expected MII count" = "red"
-    )
-  ) +
-
-  scale_x_log10(
-    breaks = c(0.5, 0.75, 1, 1.5, 2, 3),
-    labels = c("0.50", "0.75", "1.00", "1.50", "2.00", "3.00")
-  ) +
-
-  labs(
-    x = "Incidence rate ratio (IRR)",
-    y = NULL,
-    colour = NULL
-  ) +
-
-  theme_classic(base_size = 14) +
-
-  theme(
-    axis.title.x = element_text(
-      face = "bold",
-      size = 14,
-      margin = margin(t = 10)
-    ),
-    axis.text.x = element_text(
-      face = "bold",
-      size = 12
-    ),
-    axis.text.y = element_text(
-      face = "bold",
-      size = 12,
-      margin = margin(r = 8)
-    ),
-    legend.position = "bottom",
-    legend.text = element_text(size = 11)
-  )
-```
+## Make figure plots:
 
 ```{r}
 predictor_labels <- c(
@@ -875,7 +366,7 @@ p_nb1 <- plot_irr_direction(
 
 p_nb1
 
-ggsave("nb11.png", p_nb1, width = 12, height = 6,  dpi = 600)
+ggsave("../figures/nb1.png", p_nb1, width = 12, height = 6,  dpi = 600)
 ```
 
 ```{r, fig.width=12, fig.height=5}
@@ -886,18 +377,7 @@ p_nb2 <- plot_irr_direction(
 
 p_nb2
 
-ggsave("nb22.png", p_nb2, width = 12, height = 6, dpi = 600)
-```
-
-```{r, fig.width=12, fig.height=5}
-p_nb3 <- plot_irr_direction(
-  model = model_nb3,
-  #title = "Dose model"
-)
-
-p_nb3
-
-ggsave("nb33.png", p_nb3, width = 15, height = 6, dpi = 600)
+ggsave("../figures/nb2.png", p_nb2, width = 12, height = 6, dpi = 600)
 ```
 
 ```{r}
@@ -909,4 +389,69 @@ p_nb4
 
 ggsave("nb44.png", p_nb4, width = 15, height = 6, dpi = 600)
 ```
+
+
+
+## Fit Poisson Generalized Linear Model and see overdispersion, if overdispersion is present --> switch to negative binomial regression
+## Compare poisson and nbd residuals plots --> they look the samme --> supplementary figure?
+```{r}
+
+# Poisson
+plot(
+  fitted(poisson_model), rstandard(poisson_model),
+  col = "steelblue",
+  pch = 16,
+  xlab = "Predicted MII",
+  ylab = "Standardised residuals",
+  main = "Poisson"
+)
+abline(h = 0, lty = 2)
+abline(h = c(-2, 2), lty = 3, col = "grey40")
+
+# Negative binomial
+plot(
+  fitted(model1), rstandard(model1),
+  col = "steelblue",
+  pch = 16,
+  xlab = "Predicted MII",
+  ylab = "Standardised residuals",
+  main = "Negative binomial"
+)
+abline(h = 0, lty = 2)
+abline(h = c(-2, 2), lty = 3, col = "grey40")
+
+par(mfrow = c(1, 1))
+```
+
+```{r}
+## Poisson GLM
+poisson_model <- glm(
+  No_mature_eggs ~ Age + BMI + loBaseline_AMH + Baseline_total_follicles + Baseline_endometrium,
+  data = df,
+  family = poisson(link = "log")
+)
+
+## Overdispersion checks ---> Over dispersion is present
+dispersion_ratio <- deviance(poisson_model) / df.residual(poisson_model)
+dispersion_ratio ##3.571943
+
+pearson_dispersion <- sum(residuals(poisson_model, type = "pearson")^2) /
+  df.residual(poisson_model) ##3.261497
+pearson_dispersion
+
+## Negative Binomial Model
+nb1 <- glm.nb(
+  No_mature_eggs ~ Age + BMI + log_AMH + log_baseline_follicles + Baseline_endometrium + Aetiology_group,
+  data = df
+)
+
+AIC(poisson_model, nb1) ## lower AIC --> negative binomial better suited to data
+
+summary(nb1)
+exp(coef(nb1))
+
+tidy(nb1, exponentiate = TRUE, conf.int = TRUE)
+```
+
+
 
