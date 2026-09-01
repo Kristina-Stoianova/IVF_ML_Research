@@ -21,59 +21,6 @@ df <- read_csv(
 )
 ```
 
-## Manual change to dual trigger patient
-
-```{r}
-# 2313544U
-df[df$Unique_number == "2313544U", c("hCG_trigger_used", "GnRH_agonist_trigger_used", "hCG_trigger_dose_real","GnRH_agonist_trigger_dose_real")] <- 
-  list(1, 1, 250, 50)
-```
-
-##### ADD THIS TO DATA CLEANING
-```{r}
-df <- df %>%
-  mutate(
-    trigger_type = case_when(
-      GnRH_agonist_trigger_used == 1 & hCG_trigger_used == 1 ~ "Dual",
-      GnRH_agonist_trigger_used == 1 & hCG_trigger_used == 0 ~ "GnRH_agonist",
-      GnRH_agonist_trigger_used == 0 & hCG_trigger_used == 1 ~ "hCG",
-      TRUE ~ NA_character_
-    ),
-    trigger_type = factor(
-      trigger_type,
-      levels = c("hCG", "GnRH_agonist", "Dual")
-    )
-  )
-
-df <- df %>%
-  mutate(
-    Treatment_type = dplyr::recode(
-      Treatment_type,
-      "FSH_only" = "FSH only",
-      "hMG_only" = "hMG only",
-      "Dual" = "Dual"
-    ),
-    Treatment_type = factor(
-      Treatment_type,
-      levels = c("FSH only", "hMG only", "Dual")
-    )
-  )
-
-df <- df %>%
-  mutate(
-    trigger_group = case_when(
-      trigger_type == "hCG" ~ "hCG_only",
-      trigger_type %in% c("GnRH_agonist", "Dual") ~ "GnRH_agonist_containing",
-      TRUE ~ NA_character_
-    ),
-    trigger_group = factor(
-      trigger_group,
-      levels = c("hCG_only", "GnRH_agonist_containing")
-    )
-  )
-```
-
-
 ```{r}
 table(df$Treatment_type) #FSH = 32, hMG = 10, Dual = 19
 table(df$Aetiology_group) #Female factor = 15, No female factor = 30, Unexplained = 16
