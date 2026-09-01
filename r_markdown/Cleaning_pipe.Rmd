@@ -495,49 +495,6 @@ freshdata <- freshdata %>%
 
 ## Other medication
 
-```{r}
-print(unique(freshdata$Other_medications))
-
-##9 patients with other medications entered, info entered in wrong way, should be dual trigger sometimes
-##use to manually correct and to change parameters and derive parameters
-othermeds <- freshdata %>%
-  filter(!is.na(Other_medications) & Other_medications != "") %>%
-  select(
-    Unique_number,
-    Other_medications,
-    Total_other_iu,
-    Trigger_mechanism,
-    GnRH_agonist_trigger_dose,
-    hCG_trigger_dose,
-    Last_day_of_stim
-  )
-
-freshdata <- freshdata %>%
-  mutate(
-    Trigger_mechanism = case_when(
-      Unique_number %in% c(
-        "2653224K",
-        "8119398Y",
-        "8120863D",
-        "8308873N",
-        "8356317B",
-        "8391436J"
-      ) ~ "Dual",
-      TRUE ~ Trigger_mechanism
-    ),
-    
-    GnRH_agonist_trigger_dose = case_when(
-      Unique_number == "2653224K" ~ 700,
-      Unique_number == "8119398Y" ~ 32,
-      Unique_number == "8120863D" ~ 240,
-      Unique_number == "8308873N" ~ 240,
-      Unique_number == "8356317B" ~ 260,
-      Unique_number == "8391436J" ~ 240,
-      TRUE ~ GnRH_agonist_trigger_dose
-    )
-  )
-```
-
 ## Derive progesterone
 
 ```{r}
@@ -592,55 +549,9 @@ freshdata <- freshdata %>%
   select(-Fyremadel, -Total_fyremadel_iu)
 
 ## Manual fix of incorrect GnRH antagonist dose
-freshdata <- freshdata %>%
-  mutate(GnRH_antagonist_total_dose = if_else(
-    Unique_number == "0848187Z",
-    1000,
-    GnRH_antagonist_total_dose
-  ))
-
-freshdata <- freshdata %>%
-  mutate(GnRH_antagonist_total_dose = if_else(
-    Unique_number == "8214741T",
-    1750,
-    GnRH_antagonist_total_dose
-  ))
 ```
 
 ## More other medications
-
-```{r}
-#in the other medications column there are other GnRH antagonist drugs: Cetrotide 
-#manual editing by unique number
-freshdata <- freshdata %>%
-  mutate(
-    GnRH_antagonist_used = if_else(
-      Unique_number == "8228365W",
-      1,
-      GnRH_antagonist_used
-    ),
-    GnRH_antagonist_start_day = if_else(
-      Unique_number == "8228365W",
-      6,
-      GnRH_antagonist_start_day
-    ),
-    GnRH_antagonist_end_day = if_else(
-      Unique_number == "8228365W",
-      13,
-      GnRH_antagonist_end_day
-    ),
-    GnRH_antagonist_duration = if_else(
-      Unique_number == "8228365W",
-      8,
-      GnRH_antagonist_duration
-    ),
-    GnRH_antagonist_total_dose = if_else(
-      Unique_number == "8228365W",
-      2000,
-      GnRH_antagonist_total_dose
-    )
-  )
-```
 
 ## Fixing introduced NAs due to derived parameters
 
